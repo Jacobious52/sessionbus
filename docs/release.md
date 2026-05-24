@@ -52,6 +52,7 @@ end
 - `bun install --frozen-lockfile`
 - `bun run selftest`
 - `bun run release:notes v0.1.0`
+- `VERSION=v0.1.0 ./scripts/package-release.sh`
 - `cargo package -p aictx-cli --allow-dirty`
 - `aictx completions zsh`
 - `DRY_RUN=1 ./scripts/install.sh`
@@ -73,4 +74,18 @@ Create a draft release after CI is green and the tag exists:
 
 ```bash
 ./scripts/release-draft.sh v0.1.0
+```
+
+## Tag Release Artifacts
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow creates a
+draft release if one does not exist, runs the selftest, builds archives for
+Linux and macOS runners, and uploads `.tar.gz` archives plus `.sha256`
+checksums.
+
+Local package rehearsal:
+
+```bash
+VERSION=v0.1.0 ./scripts/package-release.sh
+ls dist/
 ```

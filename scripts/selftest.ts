@@ -576,6 +576,34 @@ async function runCliE2e() {
     assertIncludes(releaseDraft.stdout, "DRY_RUN=1", "release draft dry run");
   });
 
+  const releaseDist = join(tempRoot, "release-dist");
+  const releasePackage = await checked("package release artifacts", "bash", [
+    "scripts/package-release.sh",
+    "v0.1.0",
+  ], {
+    env: { ...baseEnv, PROFILE: "debug", SKIP_BUILD: "1", DIST_DIR: releaseDist },
+    cwd: root,
+  });
+  await manualStep("verify release package artifacts", async () => {
+    assertIncludes(releasePackage.stdout, "sessionbus-v0.1.0", "release archive name");
+    const archive = join(releaseDist, "sessionbus-v0.1.0-x86_64-apple-darwin.tar.gz");
+    const armArchive = join(releaseDist, "sessionbus-v0.1.0-aarch64-apple-darwin.tar.gz");
+    const linuxArchive = join(releaseDist, "sessionbus-v0.1.0-x86_64-unknown-linux-gnu.tar.gz");
+    const chosen = [archive, armArchive, linuxArchive].find((path) => existsSync(path));
+    if (!chosen) {
+      throw new Error(`expected release archive in ${releaseDist}`);
+    }
+    if (!existsSync(`${chosen}.sha256`)) {
+      throw new Error(`expected checksum for ${chosen}`);
+    }
+  });
+  await manualStep("verify tag release workflow", async () => {
+    const workflow = await readFile(join(root, ".github", "workflows", "release.yml"), "utf8");
+    assertIncludes(workflow, "tags:", "release workflow tag trigger");
+    assertIncludes(workflow, "scripts/package-release.sh", "release workflow package script");
+    assertIncludes(workflow, "gh release upload", "release workflow upload");
+  });
+
   const installCodex = await checked("print codex install helper", aictx, [
     "--api",
     api,
