@@ -99,6 +99,13 @@ eval "$(target/debug/aictx shell-init zsh --auto-capture)"
 target/debug/aictx install shell --write --shell zsh --auto-capture
 ```
 
+The TypeScript terminal adapter exposes the same behavior as a sidecar process:
+
+```bash
+bun adapters/terminal/src/index.ts register
+bun adapters/terminal/src/index.ts observe --session "$(aictx current)" --shell zsh --exit-code 0 -- cargo test
+```
+
 Useful commands:
 
 ```bash

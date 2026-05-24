@@ -68,3 +68,25 @@ Vendor-specific adapters can build on the same capability model later.
 Coordination messages are stored as note artifacts with metadata such as
 `to_agent`, `topic`, `requires_response`, and `status`. They are durable memos,
 not direct agent-to-agent chat.
+
+## Terminal adapter
+
+The terminal adapter is the first concrete sidecar path for making Sessionbus
+less manual. It is a Bun/TypeScript process that registers capabilities and can
+write terminal artifacts without being loaded into the daemon:
+
+```bash
+bun adapters/terminal/src/index.ts register
+bun adapters/terminal/src/index.ts observe --session ses_... --shell zsh --exit-code 0 -- cargo test
+printf 'test output\n' | bun adapters/terminal/src/index.ts capture --session ses_... cargo test
+```
+
+For shell integration, emit hooks that call the adapter directly:
+
+```bash
+eval "$(bun adapters/terminal/src/index.ts shell-init zsh --session ses_...)"
+```
+
+This adapter currently records command lines, exit codes, duration, shell name,
+and explicit terminal output. It intentionally keeps output capture explicit so
+the default privacy boundary remains understandable.

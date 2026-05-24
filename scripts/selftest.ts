@@ -28,6 +28,7 @@ type RunOptions = {
   cwd?: string;
   env?: Record<string, string>;
   allowFailure?: boolean;
+  stdin?: string;
 };
 
 type CommandResult = StepResult & {
@@ -72,11 +73,15 @@ async function main() {
 async function runCliE2e() {
   const aictx = join(root, "target", "debug", executableName("aictx"));
   const acpBridge = join(root, "target", "debug", executableName("sessionbus-acp-bridge"));
+  const terminalAdapter = join(root, "adapters", "terminal", "src", "index.ts");
   if (!existsSync(aictx)) {
     throw new Error(`missing built binary: ${aictx}`);
   }
   if (!existsSync(acpBridge)) {
     throw new Error(`missing built binary: ${acpBridge}`);
+  }
+  if (!existsSync(terminalAdapter)) {
+    throw new Error(`missing terminal adapter: ${terminalAdapter}`);
   }
 
   tempRoot = await mkdtemp(join(tmpdir(), "sessionbus-selftest-"));
@@ -160,6 +165,14 @@ async function runCliE2e() {
     throw new Error(`expected session id from aictx start, got: ${start.stdout}`);
   }
 
+  const terminalRegister = await checked("register terminal adapter", "bun", [
+    terminalAdapter,
+    "register",
+  ], { env: baseEnv, cwd: root });
+  await manualStep("verify terminal adapter registration", async () => {
+    assertIncludes(terminalRegister.stdout, "sessionbus.terminal", "terminal adapter id");
+  });
+
   await checked("add note through CLI", aictx, [
     "--api",
     api,
@@ -239,6 +252,45 @@ async function runCliE2e() {
     "--",
     "cargo test --workspace",
   ], { env: baseEnv, cwd: workspace });
+
+  const adapterShellInit = await checked("print terminal adapter zsh hook", "bun", [
+    terminalAdapter,
+    "shell-init",
+    "zsh",
+    "--session",
+    sessionId,
+  ], { env: baseEnv, cwd: root });
+  await manualStep("verify terminal adapter shell hook", async () => {
+    assertIncludes(adapterShellInit.stdout, "SESSIONBUS_SESSION", "adapter session export");
+    assertIncludes(adapterShellInit.stdout, "observe --session", "adapter observe call");
+  });
+
+  await checked("observe command through terminal adapter", "bun", [
+    terminalAdapter,
+    "observe",
+    "--session",
+    sessionId,
+    "--shell",
+    "zsh",
+    "--exit-code",
+    "0",
+    "--duration-ms",
+    "77",
+    "--",
+    "bun run selftest",
+  ], { env: baseEnv, cwd: root });
+
+  await checked("capture terminal output through terminal adapter", "bun", [
+    terminalAdapter,
+    "capture",
+    "--session",
+    sessionId,
+    "adapter terminal output",
+  ], {
+    env: baseEnv,
+    cwd: root,
+    stdin: "terminal adapter captured stdout\n",
+  });
 
   const messageListOpen = await checked("list open coordination messages", aictx, [
     "--api",
@@ -434,6 +486,8 @@ async function runCliE2e() {
     assertIncludes(pack.stdout, "service.yaml", "pack file artifact");
     assertIncludes(pack.stdout, "Start from staging config", "pack decision");
     assertIncludes(pack.stdout, "cargo test --workspace", "observed shell command");
+    assertIncludes(pack.stdout, "bun run selftest", "terminal adapter observed command");
+    assertIncludes(pack.stdout, "terminal adapter captured stdout", "terminal adapter captured output");
     assertIncludes(pack.stdout, "TOKEN=[REDACTED]", "pack redaction");
     assertIncludes(pack.stdout, "CLIENT_ID=[REDACTED]", "pack custom redaction");
     assertExcludes(pack.stdout, "super-secret", "pack secret leakage");
@@ -815,7 +869,12 @@ async function runCommand(
       env: { ...process.env, ...options.env },
       stdout: "pipe",
       stderr: "pipe",
+      stdin: options.stdin === undefined ? "ignore" : "pipe",
     });
+    if (options.stdin !== undefined) {
+      child.stdin.write(options.stdin);
+      child.stdin.end();
+    }
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
