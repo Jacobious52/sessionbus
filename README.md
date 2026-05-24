@@ -8,6 +8,8 @@ systems without re-explaining the same task from scratch.
 
 > Never re-explain the same engineering task to multiple AI tools again.
 
+![Sessionbus dashboard showing sessions, context packing, and recent events](docs/assets/sessionbus-dashboard.jpg)
+
 ## Why
 
 AI coding tools are powerful, but the workflow around them is fragmented.
