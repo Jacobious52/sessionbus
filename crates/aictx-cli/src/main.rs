@@ -61,6 +61,14 @@ enum CommandKind {
     Install {
         #[arg(value_enum)]
         target: InstallTarget,
+        #[arg(long)]
+        write: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        rc: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ShellKind::Zsh)]
+        shell: ShellKind,
     },
     Policy {
         #[command(subcommand)]
@@ -324,8 +332,14 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
             print_shell_init(shell);
             Ok(())
         }
-        CommandKind::Install { target } => {
-            print_install(target)?;
+        CommandKind::Install {
+            target,
+            write,
+            config,
+            rc,
+            shell,
+        } => {
+            print_install(target, write, config, rc, shell)?;
             Ok(())
         }
         CommandKind::Policy { command } => run_policy_command(command),
@@ -527,7 +541,7 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
             if print_url {
                 println!("{}", url);
             } else {
-                println!("Open {}", url);
+                open_dashboard(&url)?;
             }
             Ok(())
         }
@@ -673,25 +687,181 @@ end
     }
 }
 
-fn print_install(target: InstallTarget) -> Result<()> {
+fn print_install(
+    target: InstallTarget,
+    write: bool,
+    config: Option<PathBuf>,
+    rc: Option<PathBuf>,
+    shell: ShellKind,
+) -> Result<()> {
     let exe = std::env::current_exe()
         .ok()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "aictx".to_string());
     match target {
         InstallTarget::Codex => {
+            let block = codex_mcp_block(&exe);
+            if write {
+                let path = config.unwrap_or_else(default_codex_config_path);
+                write_codex_config(&path, &block)?;
+                println!("installed codex MCP config\t{}", path.display());
+                return Ok(());
+            }
             println!("# Runs: aictx mcp --ensure-daemon");
-            println!("[mcp_servers.sessionbus]");
-            println!("command = \"{}\"", exe);
-            println!("args = [\"mcp\", \"--ensure-daemon\"]");
-            println!("startup_timeout_sec = 10");
+            println!("{}", block.trim_end());
         }
         InstallTarget::Shell => {
+            if write {
+                let path = rc.unwrap_or_else(|| default_shell_rc_path(shell));
+                write_shell_config(&path, shell)?;
+                println!("installed shell helpers\t{}", path.display());
+                return Ok(());
+            }
             println!("# Add one of these to your shell rc file:");
             println!("eval \"$(aictx shell-init zsh)\"");
             println!("eval \"$(aictx shell-init bash)\"");
             println!("aictx shell-init fish | source");
         }
+    }
+    Ok(())
+}
+
+fn codex_mcp_block(exe: &str) -> String {
+    format!(
+        "[mcp_servers.sessionbus]\ncommand = \"{}\"\nargs = [\"mcp\", \"--ensure-daemon\"]\nstartup_timeout_sec = 10\n",
+        exe.replace('\\', "\\\\").replace('"', "\\\"")
+    )
+}
+
+fn default_codex_config_path() -> PathBuf {
+    if let Ok(home) = std::env::var("CODEX_HOME") {
+        return PathBuf::from(home).join("config.toml");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".codex").join("config.toml");
+    }
+    PathBuf::from(".codex").join("config.toml")
+}
+
+fn default_shell_rc_path(shell: ShellKind) -> PathBuf {
+    let home = std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    match shell {
+        ShellKind::Bash => home.join(".bashrc"),
+        ShellKind::Zsh => home.join(".zshrc"),
+        ShellKind::Fish => home.join(".config").join("fish").join("config.fish"),
+    }
+}
+
+fn write_codex_config(path: &Path, block: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let trimmed = remove_toml_table(&existing, "[mcp_servers.sessionbus]");
+    let mut next = trimmed.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str(block.trim_end());
+    next.push('\n');
+    fs::write(path, next).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn remove_toml_table(contents: &str, header: &str) -> String {
+    let mut output = Vec::new();
+    let mut skipping = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == header {
+            skipping = true;
+            continue;
+        }
+        if skipping && trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skipping = false;
+        }
+        if !skipping {
+            output.push(line);
+        }
+    }
+    output.join("\n")
+}
+
+fn write_shell_config(path: &Path, shell: ShellKind) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let mut next = remove_marked_block(&existing, "# sessionbus start", "# sessionbus end")
+        .trim_end()
+        .to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str("# sessionbus start\n");
+    next.push_str(shell_install_line(shell));
+    next.push_str("\n# sessionbus end\n");
+    fs::write(path, next).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn shell_install_line(shell: ShellKind) -> &'static str {
+    match shell {
+        ShellKind::Bash => "eval \"$(aictx shell-init bash)\"",
+        ShellKind::Zsh => "eval \"$(aictx shell-init zsh)\"",
+        ShellKind::Fish => "aictx shell-init fish | source",
+    }
+}
+
+fn remove_marked_block(contents: &str, start: &str, end: &str) -> String {
+    let mut output = Vec::new();
+    let mut skipping = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == start {
+            skipping = true;
+            continue;
+        }
+        if skipping && trimmed == end {
+            skipping = false;
+            continue;
+        }
+        if !skipping {
+            output.push(line);
+        }
+    }
+    output.join("\n")
+}
+
+fn open_dashboard(url: &str) -> Result<()> {
+    let mut command = if let Ok(override_command) = std::env::var("SESSIONBUS_OPEN_COMMAND") {
+        let mut command = Command::new(override_command);
+        command.arg(url);
+        command
+    } else if cfg!(target_os = "macos") {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    } else if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    } else {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+
+    let output = command.output().context("open dashboard")?;
+    io::stdout().write_all(&output.stdout)?;
+    io::stderr().write_all(&output.stderr)?;
+    if !output.status.success() {
+        return Err(anyhow!("dashboard opener exited with {}", output.status));
+    }
+    if output.stdout.is_empty() {
+        println!("{}", url);
     }
     Ok(())
 }

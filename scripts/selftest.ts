@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -457,6 +457,67 @@ async function runCliE2e() {
     assertIncludes(installShell.stdout, "aictx shell-init", "shell install command");
   });
 
+  const codexConfigPath = join(tempRoot, "codex-config.toml");
+  await checked("write codex install config", aictx, [
+    "--api",
+    api,
+    "install",
+    "codex",
+    "--write",
+    "--config",
+    codexConfigPath,
+  ], { env: baseEnv, cwd: workspace });
+  await checked("rewrite codex install config idempotently", aictx, [
+    "--api",
+    api,
+    "install",
+    "codex",
+    "--write",
+    "--config",
+    codexConfigPath,
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify written codex install config", async () => {
+    const config = await readFile(codexConfigPath, "utf8");
+    assertIncludes(config, "[mcp_servers.sessionbus]", "written codex mcp config");
+    assertIncludes(config, "mcp\", \"--ensure-daemon", "written codex ensure daemon");
+    const occurrences = config.match(/\[mcp_servers\.sessionbus\]/g)?.length ?? 0;
+    if (occurrences !== 1) {
+      throw new Error(`expected one sessionbus mcp block, got ${occurrences}: ${config}`);
+    }
+  });
+
+  const shellRcPath = join(tempRoot, "zshrc");
+  await checked("write shell install config", aictx, [
+    "--api",
+    api,
+    "install",
+    "shell",
+    "--write",
+    "--shell",
+    "zsh",
+    "--rc",
+    shellRcPath,
+  ], { env: baseEnv, cwd: workspace });
+  await checked("rewrite shell install config idempotently", aictx, [
+    "--api",
+    api,
+    "install",
+    "shell",
+    "--write",
+    "--shell",
+    "zsh",
+    "--rc",
+    shellRcPath,
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify written shell install config", async () => {
+    const rc = await readFile(shellRcPath, "utf8");
+    assertIncludes(rc, "aictx shell-init zsh", "written shell init");
+    const starts = rc.match(/sessionbus start/g)?.length ?? 0;
+    if (starts !== 1) {
+      throw new Error(`expected one shell install block, got ${starts}: ${rc}`);
+    }
+  });
+
   const dashboard = await checked("open dashboard through CLI", aictx, [
     "--api",
     api,
@@ -504,6 +565,15 @@ async function runCliE2e() {
     }).then((response) => response.json());
     assertIncludes(dashboardPack.markdown, "Dashboard-created session", "dashboard pack title");
     assertIncludes(dashboardPack.markdown, "Dashboard control note", "dashboard pack note");
+  });
+
+  const dashboardOpen = await checked("open dashboard with override command", aictx, [
+    "--api",
+    api,
+    "dashboard",
+  ], { env: { ...baseEnv, SESSIONBUS_OPEN_COMMAND: "/bin/echo" }, cwd: workspace });
+  await manualStep("verify dashboard opener output", async () => {
+    assertIncludes(dashboardOpen.stdout, `${api}/dashboard`, "dashboard opener url");
   });
 
   const cursorPack = await checked("pack cursor profile through CLI", aictx, [
