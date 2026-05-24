@@ -14,6 +14,7 @@ http://127.0.0.1:8765
 POST /sessions
 GET  /sessions
 GET  /sessions/:id
+POST /sessions/:id/status
 POST /sessions/:id/artifacts
 POST /sessions/:id/decisions
 POST /sessions/:id/pack
@@ -34,6 +35,16 @@ POST /adapters/register
   }
 }
 ```
+
+## Update session status
+
+```json
+{
+  "status": "done"
+}
+```
+
+Allowed statuses are `active`, `blocked`, `done`, and `archived`.
 
 ## Add an artifact
 

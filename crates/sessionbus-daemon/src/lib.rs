@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sessionbus_core::{
     CapabilityDescriptor, ContextPack, CreateArtifactRequest, CreateDecisionRequest,
-    CreateSessionRequest, PackProfile,
+    CreateSessionRequest, PackProfile, UpdateSessionStatusRequest,
 };
 use sessionbus_store::SessionbusStore;
 use std::{net::SocketAddr, path::PathBuf};
@@ -22,8 +22,11 @@ pub struct AppState {
 pub fn router(store: SessionbusStore) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/dashboard", get(dashboard))
+        .route("/api/dashboard", get(dashboard_api))
         .route("/sessions", post(create_session).get(list_sessions))
         .route("/sessions/:id", get(get_session))
+        .route("/sessions/:id/status", post(update_session_status))
         .route(
             "/sessions/:id/artifacts",
             post(add_artifact).get(list_artifacts),
@@ -62,6 +65,27 @@ async fn healthz() -> Json<serde_json::Value> {
     Json(json!({ "ok": true, "service": "sessionbus-daemon" }))
 }
 
+async fn dashboard() -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    (headers, DASHBOARD_HTML)
+}
+
+#[tracing::instrument(skip(state))]
+async fn dashboard_api(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let sessions = state.store.list_sessions().await?;
+    let events = state.store.list_events(None).await?;
+    Ok(Json(json!({
+        "service": "sessionbus-daemon",
+        "tagline": "Never re-explain the same engineering task to multiple AI tools again.",
+        "sessions": sessions,
+        "recent_events": events.into_iter().rev().take(25).collect::<Vec<_>>()
+    })))
+}
+
 #[tracing::instrument(skip(state, request))]
 async fn create_session(
     State(state): State<AppState>,
@@ -70,6 +94,270 @@ async fn create_session(
     let session = state.store.create_session(request).await?;
     Ok((StatusCode::CREATED, Json(session)))
 }
+
+const DASHBOARD_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sessionbus Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #171a20;
+      --panel-2: #20242c;
+      --text: #f5f7fb;
+      --muted: #aab2c0;
+      --line: #303642;
+      --accent: #7dd3fc;
+      --good: #86efac;
+      --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 20% 0%, #1b2a35 0, #101114 30rem);
+      color: var(--text);
+    }
+    header {
+      min-height: 44vh;
+      padding: 48px max(24px, 8vw) 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(42px, 7vw, 92px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+    .tagline {
+      max-width: 760px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 20px;
+    }
+    main {
+      padding: 28px max(24px, 8vw) 56px;
+      display: grid;
+      gap: 18px;
+      grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+    }
+    section {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+    h2 { margin: 0 0 14px; font-size: 16px; }
+    form {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 18px;
+      padding: 12px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    input, textarea, select, button {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #111318;
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+    }
+    textarea { min-height: 78px; resize: vertical; }
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #081018;
+      font-weight: 700;
+    }
+    .session, .event {
+      display: grid;
+      gap: 6px;
+      padding: 12px 0;
+      border-top: 1px solid var(--line);
+    }
+    .session:first-of-type, .event:first-of-type { border-top: 0; }
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    code {
+      color: var(--accent);
+      background: var(--panel-2);
+      padding: 2px 6px;
+      border-radius: 5px;
+    }
+    .status {
+      color: var(--good);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .muted { color: var(--muted); }
+    .controls { grid-column: 1 / -1; }
+    .control-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    #pack-output {
+      max-height: 260px;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: var(--muted);
+      background: #0d0f13;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    @media (max-width: 840px) {
+      main { grid-template-columns: 1fr; }
+      header { min-height: 36vh; }
+      .control-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="status">Local-first AI workflow continuity</div>
+    <h1>Sessionbus</h1>
+    <div class="tagline">Never re-explain the same engineering task to multiple AI tools again.</div>
+  </header>
+  <main>
+    <section class="controls">
+      <h2>Control Surface</h2>
+      <div class="control-grid">
+        <form id="start-form">
+          <strong>Start Session</strong>
+          <input name="title" placeholder="Fix flaky deploy" required />
+          <textarea name="summary" placeholder="Optional task summary"></textarea>
+          <button type="submit">Start</button>
+        </form>
+        <form id="note-form">
+          <strong>Add Note</strong>
+          <select name="session_id" class="session-select"></select>
+          <textarea name="text" placeholder="What should future tools know?" required></textarea>
+          <button type="submit">Add Note</button>
+        </form>
+        <form id="pack-form">
+          <strong>Render Pack</strong>
+          <select name="session_id" class="session-select"></select>
+          <select name="profile">
+            <option value="generic">Generic</option>
+            <option value="chatgpt">ChatGPT</option>
+            <option value="claude">Claude</option>
+            <option value="cursor">Cursor</option>
+            <option value="acp">ACP</option>
+          </select>
+          <button type="submit">Render</button>
+        </form>
+      </div>
+      <pre id="pack-output">Choose a session and render a pack.</pre>
+    </section>
+    <section>
+      <h2>Sessions</h2>
+      <div id="sessions" class="muted">Loading sessions...</div>
+    </section>
+    <section>
+      <h2>Recent Events</h2>
+      <div id="events" class="muted">Loading events...</div>
+    </section>
+  </main>
+  <script>
+    async function load() {
+      const data = await fetch('/api/dashboard').then((response) => response.json());
+      window.sessionbusDashboard = data;
+      hydrateSessionSelects(data.sessions);
+      const sessions = document.querySelector('#sessions');
+      sessions.innerHTML = data.sessions.map((session) => `
+        <div class="session">
+          <div class="row"><strong>${escapeHtml(session.title)}</strong><span class="status">${escapeHtml(session.status)}</span></div>
+          <div><code>${escapeHtml(session.id)}</code></div>
+          <div class="muted">${escapeHtml(session.workspace?.root || 'No workspace')}</div>
+        </div>
+      `).join('') || '<div class="muted">No sessions yet.</div>';
+      const events = document.querySelector('#events');
+      events.innerHTML = data.recent_events.map((event) => `
+        <div class="event">
+          <div><code>${escapeHtml(event.type)}</code></div>
+          <div class="muted">${escapeHtml(event.session_id || 'global')} · ${escapeHtml(event.created_at)}</div>
+        </div>
+      `).join('') || '<div class="muted">No events yet.</div>';
+    }
+    function hydrateSessionSelects(sessions) {
+      for (const select of document.querySelectorAll('.session-select')) {
+        const current = select.value;
+        select.innerHTML = sessions.map((session) => `
+          <option value="${escapeHtml(session.id)}">${escapeHtml(session.title)} (${escapeHtml(session.status)})</option>
+        `).join('');
+        if (current) select.value = current;
+      }
+    }
+    document.querySelector('#start-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      await fetch('/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: form.get('title'),
+          summary: form.get('summary') || undefined
+        })
+      });
+      event.currentTarget.reset();
+      await load();
+    });
+    document.querySelector('#note-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      await fetch(`/sessions/${encodeURIComponent(form.get('session_id'))}/artifacts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'note',
+          title: 'dashboard note',
+          body: form.get('text'),
+          metadata: { source: 'dashboard' },
+          snapshot: true
+        })
+      });
+      event.currentTarget.reset();
+      await load();
+    });
+    document.querySelector('#pack-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const pack = await fetch(`/sessions/${encodeURIComponent(form.get('session_id'))}/pack`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ profile: form.get('profile') })
+      }).then((response) => response.json());
+      document.querySelector('#pack-output').textContent = pack.markdown;
+      await load();
+    });
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[char]);
+    }
+    load().catch((error) => {
+      document.querySelector('#sessions').textContent = error.message;
+    });
+  </script>
+</body>
+</html>"#;
 
 #[tracing::instrument(skip(state))]
 async fn list_sessions(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
@@ -87,6 +375,20 @@ async fn get_session(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("session not found: {id}")))?;
     Ok(Json(session))
+}
+
+#[tracing::instrument(skip(state, request))]
+async fn update_session_status(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<UpdateSessionStatusRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(
+        state
+            .store
+            .update_session_status(&id, request.status)
+            .await?,
+    ))
 }
 
 #[tracing::instrument(skip(state, request))]

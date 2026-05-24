@@ -74,7 +74,7 @@ export function summarizeFailure(input: FailureInput): Pick<
     return {
       likelyCause: "Bun is not installed or not on PATH.",
       suggestedNextAction:
-        "Run the bun install command from https://bun.sh, then rerun `npm run selftest` or `bun run selftest`.",
+        "Run the bun install command from https://bun.sh, then rerun `bun run selftest`.",
     };
   }
 
@@ -113,7 +113,7 @@ export function summarizeFailure(input: FailureInput): Pick<
     return {
       likelyCause: "Localhost binding is blocked by the current sandbox or environment.",
       suggestedNextAction:
-        "Rerun `npm run selftest` with local network permissions, or run it in a normal developer shell.",
+        "Rerun `bun run selftest` with local network permissions, or run it in a normal developer shell.",
     };
   }
 

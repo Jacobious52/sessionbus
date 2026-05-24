@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test"
+    "test": "bun test test/*.test.ts"
   },
   "dependencies": {
     "@sessionbus/adapter-sdk": "0.1.0"

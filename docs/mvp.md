@@ -7,7 +7,9 @@ The MVP proves one workflow:
 ## In scope
 
 - Local Rust daemon with SQLite persistence.
-- `aictx` CLI for start, add-file, note, decision, pack, export, and resume.
+- `aictx` CLI for start, doctor, active-session selection, add-file, note,
+  coordination messages, decision, command capture, git context capture, pack,
+  export, import, resume, and close.
 - Deterministic context packs for ChatGPT, Claude, Cursor, ACP, and generic
   Markdown/JSON handoff.
 - Sidecar adapter capability registration.
@@ -28,18 +30,62 @@ The MVP proves one workflow:
 
 ```bash
 aictx daemon
-aictx status
-aictx start "Fix flaky deploy"
+aictx doctor
+aictx start --repo "Fix flaky deploy"
 aictx note "Issue only happens in staging"
+aictx message "Please review the staging deploy hypothesis" --to reviewer --topic deploy --requires-response
 aictx add-file service.yaml
 aictx decision "Start with staging config"
+aictx capture -- cargo test -p deploy
+aictx workspace
+aictx add-diff
+aictx add-commit HEAD
+aictx watch --once --workspace .
 aictx show
 aictx pack --for chatgpt
 aictx resume --target cursor
+aictx export --format json --for acp > sessionbus-pack.json
+aictx import sessionbus-pack.json
 ```
 
 The CLI prints generated ids for created records and prints context packs to
 stdout for inspection before pasting or importing into another tool.
+
+## Useful CLI loops
+
+```bash
+aictx current
+aictx list --active
+aictx sessions --active
+aictx use ses_...
+aictx switch ses_...
+aictx close
+```
+
+`aictx run -- <cmd>` executes a local command, streams its stdout/stderr back to
+the terminal, and stores the output as a terminal or test-result artifact. Git
+commands capture the current workspace status, dirty diff, or selected commit
+patch as explicit artifacts.
+
+`aictx capture -- <cmd>` is the automation-friendly alias for command capture.
+`aictx shell-init zsh|bash|fish` prints shell helpers, including
+`aictx-capture`, and `aictx watch --once --workspace .` captures a workspace
+state artifact. Without `--once`, `watch` polls and records a new artifact when
+the workspace status changes.
+
+`aictx doctor` checks daemon reachability, workspace facts, and current-session
+resolution. `aictx mcp --ensure-daemon` starts or reuses the local daemon, then
+runs a stdio MCP server with tools for current session lookup, pack rendering,
+artifacts, events, workspace facts, notes, decisions, and coordination messages.
+It also exposes `sessionbus://current/pack?profile=generic` as a readable
+resource.
+
+## Coordination boundary
+
+Sessionbus can support cross-agent coordination through durable events, notes,
+decisions, and artifacts in a shared local session. The MVP intentionally does
+not provide direct agent-to-agent chat, routing, or task delegation. Agents
+coordinate by writing inspectable state that humans and other tools can replay.
 
 ## Security defaults
 

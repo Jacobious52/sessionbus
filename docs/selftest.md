@@ -6,33 +6,40 @@ end-to-end feedback loop.
 ## Commands
 
 ```bash
-npm run selftest:unit
-npm run selftest
+bun install
+bun run selftest:unit
+bun run selftest
 ```
 
-`npm run selftest` uses Bun as the TypeScript runtime:
+`bun run selftest` uses Bun as the TypeScript runtime and package runner:
 
 ```text
-node scripts/run-selftest.mjs
+bun run scripts/selftest.ts
 ```
 
-The Node wrapper resolves Bun from `PATH` or the common `~/.bun/bin/bun` install
-path, prepends `~/.bun/bin` and `~/.cargo/bin` for the harness subprocesses, and
-produces a clear report when Bun is missing. The actual E2E harness runs under
-Bun.
+The E2E harness runs under Bun and prepends the common `~/.cargo/bin` location
+for Rust subprocesses.
 
 ## What it checks
 
 - Bun runtime availability.
-- npm availability.
+- Bun package manager availability.
 - TypeScript workspace build and tests.
 - Rust toolchain availability.
 - Rust format, tests, and workspace build.
 - Real `aictx` daemon startup on a random localhost port.
-- Real CLI flow: start, note, add-file, decision, pack.
-- Pack redaction and expected context content.
+- Real CLI flow: status, doctor, start, current, note, coordination message,
+  add-file, decision, command capture, git workspace inspection, git diff
+  capture, git commit capture, automation capture alias, shell helper
+  generation, workspace watch snapshot, repo-local active session resolution,
+  show, pack, export, import, switch/use, sessions/list active, and close.
+- Pack redaction, profile-specific context content, and JSON importability.
+- MCP stdio initialize, tools/list, tools/call, resources/list, resources/read,
+  richer Sessionbus tools, and `--ensure-daemon` startup flow.
 - ACP bridge registration.
 - NDJSON event stream contents.
+- Report output redaction without truncating the raw command output used by
+  assertions.
 
 ## Report
 

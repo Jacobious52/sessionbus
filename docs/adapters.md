@@ -36,3 +36,35 @@ The expected fallback order is:
 4. Manual paste/import by the engineer.
 
 This keeps the system useful even when a vendor exposes no integration API.
+
+## MCP surface
+
+`aictx mcp --ensure-daemon` is a local stdio MCP server. With
+`--ensure-daemon`, it starts or reuses a loopback daemon before serving MCP. It
+is intentionally thin: it exposes Sessionbus state to MCP clients without making
+the daemon an agent runtime.
+
+Tools:
+
+- `sessionbus_current`: read the current durable engineering session.
+- `sessionbus_pack`: render a deterministic context pack.
+- `sessionbus_handoff`: render a target-specific handoff.
+- `sessionbus_artifacts`: list current-session artifacts.
+- `sessionbus_events`: list durable event-log entries.
+- `sessionbus_workspace`: inspect the local git workspace.
+- `sessionbus_add_artifact`: add an explicit artifact.
+- `sessionbus_note`: add an inspectable note artifact.
+- `sessionbus_decision`: record a durable engineering decision.
+- `sessionbus_message`: leave an inspectable coordination message.
+
+Resources:
+
+- `sessionbus://current/pack?profile=generic`: Markdown context pack for the
+  current session.
+
+This is the preferred first bridge for AI tools that already understand MCP.
+Vendor-specific adapters can build on the same capability model later.
+
+Coordination messages are stored as note artifacts with metadata such as
+`to_agent`, `topic`, `requires_response`, and `status`. They are durable memos,
+not direct agent-to-agent chat.

@@ -122,6 +122,32 @@ impl SessionbusStore {
         row.map(session_from_row).transpose()
     }
 
+    pub async fn update_session_status(
+        &self,
+        session_id: &str,
+        status: SessionStatus,
+    ) -> Result<Session> {
+        self.ensure_session(session_id).await?;
+        sqlx::query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(status.to_string())
+            .bind(ts(Utc::now()))
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        let session = self
+            .get_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+        self.append_event(
+            Some(session_id.to_string()),
+            EventType::SessionUpdated,
+            SOURCE_STORE,
+            json!({ "session": session }),
+        )
+        .await?;
+        Ok(session)
+    }
+
     pub async fn add_artifact(
         &self,
         session_id: &str,
