@@ -66,6 +66,7 @@ target/debug/aictx start --repo "Fix flaky deploy"
 target/debug/aictx note "Issue only happens in staging"
 target/debug/aictx capture -- cargo test
 target/debug/aictx add-diff
+target/debug/aictx dogfood --for cursor --note "Ready for the next AI tool"
 target/debug/aictx pack --for cursor
 target/debug/aictx dashboard --print-url
 ```
@@ -101,6 +102,7 @@ eval "$(target/debug/aictx shell-init zsh)"
 target/debug/aictx start --repo "Build new billing export"
 aictx-capture cargo test -p billing
 target/debug/aictx message add "Please inspect the failing export test" --to codex --topic billing --requires-response
+target/debug/aictx dogfood --for chatgpt --note "Need a fresh review of the export edge cases"
 target/debug/aictx pack --preview --for chatgpt
 ```
 
@@ -137,6 +139,7 @@ Useful commands:
 ```bash
 aictx current
 aictx observe-command --shell zsh --exit-code 0 -- cargo test
+aictx dogfood --for cursor --note "Handoff for the next tool"
 aictx session doctor
 aictx session suggest
 aictx session bind --repo

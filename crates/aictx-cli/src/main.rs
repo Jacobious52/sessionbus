@@ -169,6 +169,18 @@ enum CommandKind {
         #[arg(long)]
         session: Option<String>,
     },
+    Dogfood {
+        #[arg(long = "for", default_value = "generic")]
+        profile: String,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        preview: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+        format: OutputFormat,
+    },
     Mcp {
         #[arg(long)]
         ensure_daemon: bool,
@@ -504,6 +516,17 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
         } => {
             let session_id = resolve_session(session)?;
             watch_workspace(&client, &session_id, &workspace, once, interval_ms).await
+        }
+        CommandKind::Dogfood {
+            profile,
+            session,
+            note,
+            preview,
+            format,
+        } => {
+            let session_id = resolve_session(session)?;
+            let profile = parse_profile(&profile)?;
+            dogfood_handoff(&client, &session_id, profile, note, preview, format).await
         }
         CommandKind::Mcp {
             ensure_daemon: should_ensure_daemon,
@@ -1585,6 +1608,54 @@ async fn watch_workspace(
         }
         tokio::time::sleep(Duration::from_millis(interval_ms.max(250))).await;
     }
+}
+
+async fn dogfood_handoff(
+    client: &ApiClient,
+    session_id: &str,
+    profile: PackProfile,
+    note: Option<String>,
+    preview: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let workspace = detect_workspace()?;
+    let workspace_artifact = client
+        .add_artifact(
+            session_id,
+            workspace_watch_artifact(Path::new(&workspace.root))?,
+        )
+        .await?;
+    eprintln!("artifact\tworkspace\t{}", workspace_artifact.id);
+
+    if git_output(["status", "--short"])?.is_some() {
+        let diff_artifact = client
+            .add_artifact(session_id, git_diff_artifact()?)
+            .await?;
+        eprintln!("artifact\tgit_diff\t{}", diff_artifact.id);
+    } else {
+        eprintln!("artifact\tgit_diff\tskipped-clean-worktree");
+    }
+
+    if let Some(note) = note {
+        let note_artifact = client
+            .add_artifact(
+                session_id,
+                CreateArtifactRequest {
+                    kind: ArtifactKind::Note,
+                    title: Some("dogfood note".to_string()),
+                    uri: None,
+                    body: Some(note),
+                    metadata: json!({ "source": "dogfood" }),
+                    snapshot: true,
+                },
+            )
+            .await?;
+        eprintln!("artifact\tnote\t{}", note_artifact.id);
+    }
+
+    let mut pack = client.pack(session_id, profile).await?;
+    apply_local_redaction(&mut pack)?;
+    print_pack(pack, format, preview)
 }
 
 struct DaemonGuard {

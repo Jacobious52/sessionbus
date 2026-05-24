@@ -30,7 +30,7 @@ for Rust subprocesses.
 - Real `aictx` daemon startup on a random localhost port.
 - Real CLI flow: status, doctor, start, current, note, coordination message,
   add-file, decision, command capture, git workspace inspection, git diff
-  capture, git commit capture, automation capture alias, shell helper
+  capture, dogfood handoff, git commit capture, automation capture alias, shell helper
   generation, workspace watch snapshot, repo-local active session resolution,
   show, pack, export, import, switch/use, sessions/list active, and close.
 - Pack redaction, profile-specific context content, and JSON importability.

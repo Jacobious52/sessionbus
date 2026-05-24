@@ -479,6 +479,26 @@ async function runCliE2e() {
     workspace,
   ], { env: baseEnv, cwd: workspace });
 
+  const dogfood = await checked("prepare dogfood handoff through CLI", aictx, [
+    "--api",
+    api,
+    "dogfood",
+    "--for",
+    "chatgpt",
+    "--note",
+    "Dogfood handoff for the next AI tool",
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify dogfood handoff", async () => {
+    assertIncludes(dogfood.stdout, "Selftest continuity", "dogfood pack title");
+    assertIncludes(dogfood.stdout, "Dogfood handoff for the next AI tool", "dogfood note");
+    assertIncludes(dogfood.stdout, "workspace watch", "dogfood workspace snapshot");
+    assertIncludes(dogfood.stdout, "git diff", "dogfood git diff");
+    assertIncludes(dogfood.stdout, "service.yaml", "dogfood dirty file");
+    assertIncludes(dogfood.stderr, "artifact\tworkspace", "dogfood workspace artifact id");
+    assertIncludes(dogfood.stderr, "artifact\tgit_diff", "dogfood diff artifact id");
+    assertIncludes(dogfood.stderr, "artifact\tnote", "dogfood note artifact id");
+  });
+
   const childWorkspace = join(workspace, "src");
   await mkdir(childWorkspace, { recursive: true });
   const currentFromChild = await checked("resolve workspace session from child directory", aictx, [

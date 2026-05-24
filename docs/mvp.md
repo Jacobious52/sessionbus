@@ -38,6 +38,7 @@ aictx add-file service.yaml
 aictx decision "Start with staging config"
 aictx capture -- cargo test -p deploy
 aictx workspace
+aictx dogfood --for cursor --note "Ready to continue in Cursor"
 aictx add-diff
 aictx add-commit HEAD
 aictx watch --once --workspace .
@@ -72,6 +73,12 @@ patch as explicit artifacts.
 `aictx-capture`, and `aictx watch --once --workspace .` captures a workspace
 state artifact. Without `--once`, `watch` polls and records a new artifact when
 the workspace status changes.
+
+`aictx dogfood --for chatgpt|claude|cursor|acp|generic` prepares a handoff for
+the next AI tool by recording the current workspace state, capturing the dirty
+git diff when one exists, adding an optional `--note`, and printing a redacted
+deterministic context pack to stdout. Capture bookkeeping is written to stderr
+so stdout stays pasteable.
 
 `aictx doctor` checks daemon reachability, workspace facts, and current-session
 resolution. `aictx mcp --ensure-daemon` starts or reuses the local daemon, then
