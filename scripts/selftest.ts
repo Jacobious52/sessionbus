@@ -556,6 +556,26 @@ async function runCliE2e() {
     assertIncludes(installDryRun.stdout, "aictx setup", "install next step");
   });
 
+  const releaseNotes = await checked("generate release notes", "bun", [
+    "run",
+    "release:notes",
+    "v0.1.0",
+  ], { env: baseEnv, cwd: root });
+  await manualStep("verify release notes", async () => {
+    assertIncludes(releaseNotes.stdout, "# Sessionbus v0.1.0", "release notes title");
+    assertIncludes(releaseNotes.stdout, "aictx setup", "release notes setup");
+    assertIncludes(releaseNotes.stdout, "Privacy boundary", "release notes privacy");
+  });
+
+  const releaseDraft = await checked("dry run release draft", "bash", [
+    "scripts/release-draft.sh",
+    "v0.1.0",
+  ], { env: { ...baseEnv, DRY_RUN: "1" }, cwd: root });
+  await manualStep("verify release draft dry run", async () => {
+    assertIncludes(releaseDraft.stdout, "gh release create", "gh release command");
+    assertIncludes(releaseDraft.stdout, "DRY_RUN=1", "release draft dry run");
+  });
+
   const installCodex = await checked("print codex install helper", aictx, [
     "--api",
     api,

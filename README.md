@@ -210,6 +210,7 @@ Current workspace:
 - `packages/adapter-sdk-ts`: TypeScript adapter SDK.
 - `adapters/*`: example adapters.
 - `scripts/install.sh`: local source install helper.
+- `docs/release.md`: release checklist, notes, and GitHub draft flow.
 
 ## Status
 

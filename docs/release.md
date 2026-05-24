@@ -51,10 +51,26 @@ end
 
 - `bun install --frozen-lockfile`
 - `bun run selftest`
+- `bun run release:notes v0.1.0`
 - `cargo package -p aictx-cli --allow-dirty`
 - `aictx completions zsh`
 - `DRY_RUN=1 ./scripts/install.sh`
+- `DRY_RUN=1 ./scripts/release-draft.sh v0.1.0`
 - README screenshot is current.
 - GitHub Actions is green on `main`.
 - Create tag `v0.1.0`.
 - Publish release notes with install, setup, MCP, dashboard, and privacy notes.
+
+## Draft a GitHub Release
+
+Preview the command and generated notes file:
+
+```bash
+DRY_RUN=1 ./scripts/release-draft.sh v0.1.0
+```
+
+Create a draft release after CI is green and the tag exists:
+
+```bash
+./scripts/release-draft.sh v0.1.0
+```

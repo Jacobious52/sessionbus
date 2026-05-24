@@ -12,6 +12,7 @@
     "build:workspaces": "bun run --cwd packages/adapter-sdk-ts build && bun run --cwd adapters/terminal build && bun run --cwd adapters/filesystem build",
     "test": "bun run selftest:unit && bun run test:workspaces",
     "test:workspaces": "bun run --cwd packages/adapter-sdk-ts test && bun run --cwd adapters/terminal test && bun run --cwd adapters/filesystem test",
+    "release:notes": "bun run scripts/release-notes.ts",
     "selftest": "bun run scripts/selftest.ts",
     "selftest:unit": "bun test scripts/*.test.ts"
   },
