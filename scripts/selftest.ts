@@ -632,7 +632,7 @@ async function runCliE2e() {
   ], { env: baseEnv, cwd: workspace });
   await manualStep("verify codex install helper", async () => {
     assertIncludes(installCodex.stdout, "[mcp_servers.sessionbus]", "codex mcp config");
-    assertIncludes(installCodex.stdout, "mcp --ensure-daemon", "codex ensure daemon");
+    assertIncludes(installCodex.stdout, 'args = ["mcp"]', "codex default daemon startup");
   });
 
   const installShell = await checked("print shell install helper", aictx, [
@@ -679,7 +679,7 @@ async function runCliE2e() {
   await manualStep("verify written codex install config", async () => {
     const config = await readFile(codexConfigPath, "utf8");
     assertIncludes(config, "[mcp_servers.sessionbus]", "written codex mcp config");
-    assertIncludes(config, "mcp\", \"--ensure-daemon", "written codex ensure daemon");
+    assertIncludes(config, 'args = ["mcp"]', "written codex default daemon startup");
     const occurrences = config.match(/\[mcp_servers\.sessionbus\]/g)?.length ?? 0;
     if (occurrences !== 1) {
       throw new Error(`expected one sessionbus mcp block, got ${occurrences}: ${config}`);
@@ -977,6 +977,18 @@ async function runCliE2e() {
       throw new Error(`missing ensured MCP initialize response: ${JSON.stringify(initialize)}`);
     }
     assertIncludes(JSON.stringify(packTool), "Selftest continuity", "ensured MCP pack tool");
+  });
+
+  await manualStep("exercise MCP default daemon startup", async () => {
+    const defaultEnsuredPort = await pickPort();
+    const defaultEnsuredApi = `http://127.0.0.1:${defaultEnsuredPort}`;
+    const responses = await runMcpExchange(aictx, baseEnv, workspace, defaultEnsuredApi, false);
+    const initialize = responses.find((response) => response.id === 1);
+    const packTool = responses.find((response) => response.id === 3);
+    if (!initialize?.result?.serverInfo?.name?.includes("sessionbus")) {
+      throw new Error(`missing default-ensured MCP initialize response: ${JSON.stringify(initialize)}`);
+    }
+    assertIncludes(JSON.stringify(packTool), "Selftest continuity", "default MCP pack tool");
   });
 
   await checked("register ACP bridge", acpBridge, ["--api", api, "register"], {

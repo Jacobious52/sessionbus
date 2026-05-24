@@ -36,7 +36,7 @@ for Rust subprocesses.
 - Pack redaction, profile-specific context content, and JSON importability.
 - MCP stdio initialize, tools/list, tools/call, dogfood handoff,
   resources/list, resources/read, richer Sessionbus tools, and
-  `--ensure-daemon` startup flow.
+  default daemon startup flow.
 - ACP bridge registration.
 - NDJSON event stream contents.
 - Report output redaction without truncating the raw command output used by

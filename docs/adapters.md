@@ -39,10 +39,10 @@ This keeps the system useful even when a vendor exposes no integration API.
 
 ## MCP surface
 
-`aictx mcp --ensure-daemon` is a local stdio MCP server. With
-`--ensure-daemon`, it starts or reuses a loopback daemon before serving MCP. It
-is intentionally thin: it exposes Sessionbus state to MCP clients without making
-the daemon an agent runtime.
+`aictx mcp` is a local stdio MCP server. It starts or reuses a loopback daemon
+before serving MCP unless `--no-ensure-daemon` is passed. It is intentionally
+thin: it exposes Sessionbus state to MCP clients without making the daemon an
+agent runtime.
 
 Tools:
 

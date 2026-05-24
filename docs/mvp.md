@@ -81,8 +81,8 @@ deterministic context pack to stdout. Capture bookkeeping is written to stderr
 so stdout stays pasteable.
 
 `aictx doctor` checks daemon reachability, workspace facts, and current-session
-resolution. `aictx mcp --ensure-daemon` starts or reuses the local daemon, then
-runs a stdio MCP server with tools for current session lookup, pack rendering,
+resolution. `aictx mcp` starts or reuses the local daemon, then runs a stdio MCP
+server with tools for current session lookup, dogfood handoffs, pack rendering,
 artifacts, events, workspace facts, notes, decisions, and coordination messages.
 It also exposes `sessionbus://current/pack?profile=generic` as a readable
 resource.

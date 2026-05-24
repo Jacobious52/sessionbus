@@ -12,7 +12,7 @@ console.log("## What ships");
 console.log();
 console.log("- Local-first Rust daemon and `aictx` CLI backed by SQLite.");
 console.log("- Durable sessions, artifacts, decisions, coordination messages, and deterministic context packs.");
-console.log("- MCP bridge via `aictx mcp --ensure-daemon` for AI tools that can call MCP.");
+console.log("- MCP bridge via `aictx mcp` for AI tools that can call MCP.");
 console.log("- Dashboard for sessions, recent artifacts, integration health, and pack rendering.");
 console.log("- Opt-in shell capture and Bun sidecar adapters for terminal/filesystem workflows.");
 console.log("- `aictx setup` bootstrap flow, shell completions, and local source install script.");

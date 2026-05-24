@@ -184,6 +184,8 @@ enum CommandKind {
     Mcp {
         #[arg(long)]
         ensure_daemon: bool,
+        #[arg(long)]
+        no_ensure_daemon: bool,
     },
     AddDiff {
         #[arg(long)]
@@ -529,12 +531,13 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
             dogfood_handoff(&client, &session_id, profile, note, preview, format).await
         }
         CommandKind::Mcp {
-            ensure_daemon: should_ensure_daemon,
+            ensure_daemon: _ensure_daemon,
+            no_ensure_daemon,
         } => {
-            let _daemon = if should_ensure_daemon {
-                ensure_daemon(&client).await?
-            } else {
+            let _daemon = if no_ensure_daemon {
                 None
+            } else {
+                ensure_daemon(&client).await?
             };
             run_mcp_server(client).await
         }
@@ -1034,7 +1037,7 @@ fn print_install(
                 println!("installed codex MCP config\t{}", path.display());
                 return Ok(());
             }
-            println!("# Runs: aictx mcp --ensure-daemon");
+            println!("# Runs: aictx mcp");
             println!("{}", block.trim_end());
         }
         InstallTarget::Shell => {
@@ -1058,7 +1061,7 @@ fn print_install(
 
 fn codex_mcp_block(exe: &str) -> String {
     format!(
-        "[mcp_servers.sessionbus]\ncommand = \"{}\"\nargs = [\"mcp\", \"--ensure-daemon\"]\nstartup_timeout_sec = 10\n",
+        "[mcp_servers.sessionbus]\ncommand = \"{}\"\nargs = [\"mcp\"]\nstartup_timeout_sec = 10\n",
         exe.replace('\\', "\\\\").replace('"', "\\\"")
     )
 }

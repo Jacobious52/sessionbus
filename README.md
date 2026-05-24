@@ -81,7 +81,7 @@ For Codex, add this to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.sessionbus]
 command = "/absolute/path/to/sessionbus/target/debug/aictx"
-args = ["mcp", "--ensure-daemon"]
+args = ["mcp"]
 startup_timeout_sec = 10
 ```
 
@@ -183,7 +183,7 @@ aictx redact test "CLIENT_ID=company-internal"
 Run:
 
 ```bash
-aictx mcp --ensure-daemon
+aictx mcp
 aictx dashboard --print-url
 ```
 
