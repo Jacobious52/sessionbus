@@ -475,6 +475,35 @@ async function runCliE2e() {
     if (!Array.isArray(data.sessions) || data.sessions.length === 0) {
       throw new Error(`expected dashboard sessions, got ${JSON.stringify(data)}`);
     }
+    const dashboardSession = await fetch(`${api}/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Dashboard-created session",
+        summary: "Created through dashboard-compatible API control flow.",
+      }),
+    }).then((response) => response.json());
+    if (!dashboardSession.id?.startsWith("ses_")) {
+      throw new Error(`expected dashboard session id, got ${JSON.stringify(dashboardSession)}`);
+    }
+    await fetch(`${api}/sessions/${dashboardSession.id}/artifacts`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "note",
+        title: "dashboard note",
+        body: "Dashboard control note",
+        metadata: { source: "dashboard-selftest" },
+        snapshot: true,
+      }),
+    });
+    const dashboardPack = await fetch(`${api}/sessions/${dashboardSession.id}/pack`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profile: "generic" }),
+    }).then((response) => response.json());
+    assertIncludes(dashboardPack.markdown, "Dashboard-created session", "dashboard pack title");
+    assertIncludes(dashboardPack.markdown, "Dashboard control note", "dashboard pack note");
   });
 
   const cursorPack = await checked("pack cursor profile through CLI", aictx, [
