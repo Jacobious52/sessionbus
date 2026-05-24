@@ -77,11 +77,24 @@ async fn dashboard() -> impl IntoResponse {
 #[tracing::instrument(skip(state))]
 async fn dashboard_api(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let sessions = state.store.list_sessions().await?;
+    let mut recent_artifacts = Vec::new();
+    for session in sessions.iter().rev().take(8) {
+        let mut artifacts = state.store.list_artifacts(&session.id).await?;
+        recent_artifacts.append(&mut artifacts);
+    }
+    recent_artifacts.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    recent_artifacts.truncate(12);
     let events = state.store.list_events(None).await?;
     Ok(Json(json!({
         "service": "sessionbus-daemon",
         "tagline": "Never re-explain the same engineering task to multiple AI tools again.",
         "sessions": sessions,
+        "recent_artifacts": recent_artifacts,
         "recent_events": events.into_iter().rev().take(25).collect::<Vec<_>>()
     })))
 }
@@ -180,6 +193,16 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       color: #081018;
       font-weight: 700;
     }
+    button.secondary {
+      background: var(--panel-2);
+      border-color: var(--line);
+      color: var(--text);
+    }
+    button.danger {
+      background: #2a171b;
+      border-color: #7f1d1d;
+      color: #fecaca;
+    }
     .session, .event {
       display: grid;
       gap: 6px;
@@ -207,10 +230,38 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
     }
     .muted { color: var(--muted); }
     .controls { grid-column: 1 / -1; }
+    .operator-grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, .72fr);
+    }
     .control-grid {
       display: grid;
       gap: 12px;
       grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .session-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .session-actions button {
+      width: auto;
+      min-width: 104px;
+      padding: 7px 10px;
+    }
+    .pack-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin: 14px 0 8px;
+    }
+    .pack-toolbar button {
+      width: auto;
+      min-width: 104px;
+      padding: 8px 10px;
     }
     #pack-output {
       max-height: 260px;
@@ -226,6 +277,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       main { grid-template-columns: 1fr; }
       header { min-height: 36vh; }
       .control-grid { grid-template-columns: 1fr; }
+      .operator-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -264,13 +316,23 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
           <button type="submit">Render</button>
         </form>
       </div>
-      <pre id="pack-output">Choose a session and render a pack.</pre>
+      <div class="pack-toolbar">
+        <span class="muted" id="pack-status">Choose a session and render a pack.</span>
+        <button type="button" id="copy-pack" class="secondary">Copy Pack</button>
+      </div>
+      <pre id="pack-output"></pre>
     </section>
-    <section>
-      <h2>Sessions</h2>
-      <div id="sessions" class="muted">Loading sessions...</div>
-    </section>
-    <section>
+    <div class="operator-grid" style="grid-column: 1 / -1;">
+      <section>
+        <h2>Sessions</h2>
+        <div id="sessions" class="muted">Loading sessions...</div>
+      </section>
+      <section>
+        <h2>Recent Artifacts</h2>
+        <div id="artifacts" class="muted">Loading artifacts...</div>
+      </section>
+    </div>
+    <section style="grid-column: 1 / -1;">
       <h2>Recent Events</h2>
       <div id="events" class="muted">Loading events...</div>
     </section>
@@ -286,8 +348,19 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
           <div class="row"><strong>${escapeHtml(session.title)}</strong><span class="status">${escapeHtml(session.status)}</span></div>
           <div><code>${escapeHtml(session.id)}</code></div>
           <div class="muted">${escapeHtml(session.workspace?.root || 'No workspace')}</div>
+          <div class="session-actions">
+            <button type="button" class="secondary" data-render-session="${escapeHtml(session.id)}">Render Pack</button>
+            <button type="button" class="danger" data-close-session="${escapeHtml(session.id)}">Close</button>
+          </div>
         </div>
       `).join('') || '<div class="muted">No sessions yet.</div>';
+      const artifacts = document.querySelector('#artifacts');
+      artifacts.innerHTML = data.recent_artifacts.map((artifact) => `
+        <div class="event">
+          <div class="row"><strong>${escapeHtml(artifact.title || 'untitled')}</strong><code>${escapeHtml(artifact.kind)}</code></div>
+          <div class="muted">${escapeHtml(artifact.session_id)} · ${escapeHtml(artifact.created_at)}</div>
+        </div>
+      `).join('') || '<div class="muted">No artifacts yet.</div>';
       const events = document.querySelector('#events');
       events.innerHTML = data.recent_events.map((event) => `
         <div class="event">
@@ -345,7 +418,36 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
         body: JSON.stringify({ profile: form.get('profile') })
       }).then((response) => response.json());
       document.querySelector('#pack-output').textContent = pack.markdown;
+      document.querySelector('#pack-status').textContent = `Rendered ${form.get('profile')} pack`;
       await load();
+    });
+    document.querySelector('#sessions').addEventListener('click', async (event) => {
+      const renderSession = event.target?.dataset?.renderSession;
+      const closeSession = event.target?.dataset?.closeSession;
+      if (renderSession) {
+        const pack = await fetch(`/sessions/${encodeURIComponent(renderSession)}/pack`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ profile: 'generic' })
+        }).then((response) => response.json());
+        document.querySelector('#pack-output').textContent = pack.markdown;
+        document.querySelector('#pack-status').textContent = 'Rendered generic pack';
+        await load();
+      }
+      if (closeSession) {
+        await fetch(`/sessions/${encodeURIComponent(closeSession)}/status`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ status: 'done' })
+        });
+        await load();
+      }
+    });
+    document.querySelector('#copy-pack').addEventListener('click', async () => {
+      const text = document.querySelector('#pack-output').textContent;
+      if (!text.trim()) return;
+      await navigator.clipboard.writeText(text);
+      document.querySelector('#pack-status').textContent = 'Copied pack';
     });
     function escapeHtml(value) {
       return String(value).replace(/[&<>"']/g, (char) => ({

@@ -226,6 +226,20 @@ async function runCliE2e() {
     "--requires-response",
   ], { env: baseEnv, cwd: workspace });
 
+  await checked("observe shell command through CLI primitive", aictx, [
+    "--api",
+    api,
+    "observe-command",
+    "--shell",
+    "zsh",
+    "--exit-code",
+    "0",
+    "--duration-ms",
+    "42",
+    "--",
+    "cargo test --workspace",
+  ], { env: baseEnv, cwd: workspace });
+
   const messageListOpen = await checked("list open coordination messages", aictx, [
     "--api",
     api,
@@ -419,6 +433,7 @@ async function runCliE2e() {
     assertIncludes(pack.stdout, "Issue only happens in staging", "pack note");
     assertIncludes(pack.stdout, "service.yaml", "pack file artifact");
     assertIncludes(pack.stdout, "Start from staging config", "pack decision");
+    assertIncludes(pack.stdout, "cargo test --workspace", "observed shell command");
     assertIncludes(pack.stdout, "TOKEN=[REDACTED]", "pack redaction");
     assertIncludes(pack.stdout, "CLIENT_ID=[REDACTED]", "pack custom redaction");
     assertExcludes(pack.stdout, "super-secret", "pack secret leakage");
@@ -455,6 +470,18 @@ async function runCliE2e() {
   ], { env: baseEnv, cwd: workspace });
   await manualStep("verify shell install helper", async () => {
     assertIncludes(installShell.stdout, "aictx shell-init", "shell install command");
+  });
+
+  const shellInitAuto = await checked("print shell auto capture hook", aictx, [
+    "--api",
+    api,
+    "shell-init",
+    "zsh",
+    "--auto-capture",
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify shell auto capture hook", async () => {
+    assertIncludes(shellInitAuto.stdout, "observe-command", "auto capture observe primitive");
+    assertIncludes(shellInitAuto.stdout, "add-zsh-hook", "zsh hook registration");
   });
 
   const codexConfigPath = join(tempRoot, "codex-config.toml");
@@ -518,6 +545,24 @@ async function runCliE2e() {
     }
   });
 
+  const shellAutoRcPath = join(tempRoot, "zshrc-auto");
+  await checked("write shell auto capture install config", aictx, [
+    "--api",
+    api,
+    "install",
+    "shell",
+    "--write",
+    "--shell",
+    "zsh",
+    "--auto-capture",
+    "--rc",
+    shellAutoRcPath,
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify written shell auto capture install config", async () => {
+    const rc = await readFile(shellAutoRcPath, "utf8");
+    assertIncludes(rc, "aictx shell-init zsh --auto-capture", "written shell auto init");
+  });
+
   const dashboard = await checked("open dashboard through CLI", aictx, [
     "--api",
     api,
@@ -532,9 +577,15 @@ async function runCliE2e() {
     assertIncludes(page, "Start Session", "dashboard start control");
     assertIncludes(page, "Add Note", "dashboard note control");
     assertIncludes(page, "Render Pack", "dashboard pack control");
+    assertIncludes(page, "Copy Pack", "dashboard copy control");
+    assertIncludes(page, "Recent Artifacts", "dashboard artifact timeline");
+    assertIncludes(page, "Close", "dashboard close control");
     const data = await fetch(`${api}/api/dashboard`).then((response) => response.json());
     if (!Array.isArray(data.sessions) || data.sessions.length === 0) {
       throw new Error(`expected dashboard sessions, got ${JSON.stringify(data)}`);
+    }
+    if (!Array.isArray(data.recent_artifacts)) {
+      throw new Error(`expected dashboard recent_artifacts, got ${JSON.stringify(data)}`);
     }
     const dashboardSession = await fetch(`${api}/sessions`, {
       method: "POST",
@@ -565,6 +616,14 @@ async function runCliE2e() {
     }).then((response) => response.json());
     assertIncludes(dashboardPack.markdown, "Dashboard-created session", "dashboard pack title");
     assertIncludes(dashboardPack.markdown, "Dashboard control note", "dashboard pack note");
+    const status = await fetch(`${api}/sessions/${dashboardSession.id}/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    }).then((response) => response.json());
+    if (status.status !== "done") {
+      throw new Error(`expected dashboard status update to close session, got ${JSON.stringify(status)}`);
+    }
   });
 
   const dashboardOpen = await checked("open dashboard with override command", aictx, [

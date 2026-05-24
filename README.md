@@ -56,8 +56,8 @@ target/debug/aictx pack --for cursor
 target/debug/aictx dashboard --print-url
 ```
 
-Open the printed dashboard URL to view sessions, recent events, add notes, start
-sessions, and render context packs.
+Open the printed dashboard URL to view sessions, recent artifacts, recent
+events, add notes, close sessions, and render/copy context packs.
 
 ## MCP Setup
 
@@ -74,6 +74,7 @@ Or print the snippet from the CLI:
 
 ```bash
 target/debug/aictx install codex
+target/debug/aictx install codex --write
 ```
 
 The MCP server exposes tools for current session lookup, pack rendering,
@@ -89,10 +90,20 @@ target/debug/aictx message add "Please inspect the failing export test" --to cod
 target/debug/aictx pack --preview --for chatgpt
 ```
 
+For passive command-line continuity, opt into shell command observation. This
+records command lines, exit codes, shell name, and duration into the active
+session; it does not capture terminal output unless you use `aictx capture`.
+
+```bash
+eval "$(target/debug/aictx shell-init zsh --auto-capture)"
+target/debug/aictx install shell --write --shell zsh --auto-capture
+```
+
 Useful commands:
 
 ```bash
 aictx current
+aictx observe-command --shell zsh --exit-code 0 -- cargo test
 aictx session doctor
 aictx session suggest
 aictx session bind --repo

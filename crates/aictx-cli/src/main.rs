@@ -57,6 +57,8 @@ enum CommandKind {
     ShellInit {
         #[arg(value_enum)]
         shell: ShellKind,
+        #[arg(long)]
+        auto_capture: bool,
     },
     Install {
         #[arg(value_enum)]
@@ -69,6 +71,8 @@ enum CommandKind {
         rc: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = ShellKind::Zsh)]
         shell: ShellKind,
+        #[arg(long)]
+        auto_capture: bool,
     },
     Policy {
         #[command(subcommand)]
@@ -114,6 +118,18 @@ enum CommandKind {
     Capture {
         #[arg(long)]
         session: Option<String>,
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    ObserveCommand {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        exit_code: Option<i32>,
+        #[arg(long)]
+        duration_ms: Option<u128>,
+        #[arg(long)]
+        shell: Option<String>,
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
@@ -328,8 +344,11 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
             println!("{}", session.id);
             Ok(())
         }
-        CommandKind::ShellInit { shell } => {
-            print_shell_init(shell);
+        CommandKind::ShellInit {
+            shell,
+            auto_capture,
+        } => {
+            print_shell_init(shell, auto_capture);
             Ok(())
         }
         CommandKind::Install {
@@ -338,8 +357,9 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
             config,
             rc,
             shell,
+            auto_capture,
         } => {
-            print_install(target, write, config, rc, shell)?;
+            print_install(target, write, config, rc, shell, auto_capture)?;
             Ok(())
         }
         CommandKind::Policy { command } => run_policy_command(command),
@@ -387,6 +407,24 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
         CommandKind::Capture { session, command } => {
             let session_id = resolve_session(session)?;
             run_and_capture(&client, &session_id, &command).await
+        }
+        CommandKind::ObserveCommand {
+            session,
+            exit_code,
+            duration_ms,
+            shell,
+            command,
+        } => {
+            let session_id = resolve_session(session)?;
+            observe_command(
+                &client,
+                &session_id,
+                &command,
+                exit_code,
+                duration_ms,
+                shell,
+            )
+            .await
         }
         CommandKind::Workspace => {
             print_workspace()?;
@@ -640,7 +678,7 @@ fn print_session_show(session: &Session, artifacts: &[Artifact], decisions: &[De
     }
 }
 
-fn print_shell_init(shell: ShellKind) {
+fn print_shell_init(shell: ShellKind, auto_capture: bool) {
     match shell {
         ShellKind::Bash | ShellKind::Zsh => {
             println!(
@@ -658,6 +696,13 @@ aictx-pack-copy() {{
 }}
 "#
             );
+            if auto_capture {
+                match shell {
+                    ShellKind::Zsh => print_zsh_auto_capture_hook(),
+                    ShellKind::Bash => print_bash_auto_capture_hook(),
+                    ShellKind::Fish => unreachable!("fish handled separately"),
+                }
+            }
         }
         ShellKind::Fish => {
             println!(
@@ -683,8 +728,72 @@ function aictx-pack-copy
 end
 "#
             );
+            if auto_capture {
+                print_fish_auto_capture_hook();
+            }
         }
     }
+}
+
+fn print_zsh_auto_capture_hook() {
+    println!(
+        r#"# Sessionbus passive command observation
+autoload -Uz add-zsh-hook
+__aictx_preexec() {{
+  export __AICTX_LAST_COMMAND="$1"
+  export __AICTX_LAST_STARTED_AT="$(date +%s%3N 2>/dev/null || date +%s)"
+}}
+__aictx_precmd() {{
+  local status="$?"
+  if [[ -n "${{__AICTX_LAST_COMMAND:-}}" ]]; then
+    local now="$(date +%s%3N 2>/dev/null || date +%s)"
+    local duration=""
+    if [[ -n "${{__AICTX_LAST_STARTED_AT:-}}" && "$now" == <-> && "$__AICTX_LAST_STARTED_AT" == <-> ]]; then
+      duration=$(( now - __AICTX_LAST_STARTED_AT ))
+    fi
+    if [[ -n "$duration" ]]; then
+      command aictx observe-command --shell zsh --exit-code "$status" --duration-ms "$duration" -- "$__AICTX_LAST_COMMAND" >/dev/null 2>&1
+    else
+      command aictx observe-command --shell zsh --exit-code "$status" -- "$__AICTX_LAST_COMMAND" >/dev/null 2>&1
+    fi
+    unset __AICTX_LAST_COMMAND __AICTX_LAST_STARTED_AT
+  fi
+}}
+add-zsh-hook preexec __aictx_preexec
+add-zsh-hook precmd __aictx_precmd
+"#
+    );
+}
+
+fn print_bash_auto_capture_hook() {
+    println!(
+        r#"# Sessionbus passive command observation
+__aictx_prompt_command() {{
+  local status="$?"
+  local command_line
+  command_line="$(history 1 | sed 's/^ *[0-9]* *//')"
+  if [[ -n "$command_line" && "$command_line" != "$__AICTX_LAST_COMMAND" ]]; then
+    __AICTX_LAST_COMMAND="$command_line"
+    command aictx observe-command --shell bash --exit-code "$status" -- "$command_line" >/dev/null 2>&1
+  fi
+}}
+PROMPT_COMMAND="__aictx_prompt_command${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
+"#
+    );
+}
+
+fn print_fish_auto_capture_hook() {
+    println!(
+        r#"# Sessionbus passive command observation
+function __aictx_postexec --on-event fish_postexec
+  set status $status
+  set command_line (string join " " $argv)
+  if test -n "$command_line"
+    command aictx observe-command --shell fish --exit-code $status -- "$command_line" >/dev/null 2>&1
+  end
+end
+"#
+    );
 }
 
 fn print_install(
@@ -693,6 +802,7 @@ fn print_install(
     config: Option<PathBuf>,
     rc: Option<PathBuf>,
     shell: ShellKind,
+    auto_capture: bool,
 ) -> Result<()> {
     let exe = std::env::current_exe()
         .ok()
@@ -713,7 +823,7 @@ fn print_install(
         InstallTarget::Shell => {
             if write {
                 let path = rc.unwrap_or_else(|| default_shell_rc_path(shell));
-                write_shell_config(&path, shell)?;
+                write_shell_config(&path, shell, auto_capture)?;
                 println!("installed shell helpers\t{}", path.display());
                 return Ok(());
             }
@@ -721,6 +831,9 @@ fn print_install(
             println!("eval \"$(aictx shell-init zsh)\"");
             println!("eval \"$(aictx shell-init bash)\"");
             println!("aictx shell-init fish | source");
+            println!();
+            println!("# Add --auto-capture to observe command lines and exit codes:");
+            println!("eval \"$(aictx shell-init zsh --auto-capture)\"");
         }
     }
     Ok(())
@@ -789,7 +902,7 @@ fn remove_toml_table(contents: &str, header: &str) -> String {
     output.join("\n")
 }
 
-fn write_shell_config(path: &Path, shell: ShellKind) -> Result<()> {
+fn write_shell_config(path: &Path, shell: ShellKind, auto_capture: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -801,17 +914,18 @@ fn write_shell_config(path: &Path, shell: ShellKind) -> Result<()> {
         next.push_str("\n\n");
     }
     next.push_str("# sessionbus start\n");
-    next.push_str(shell_install_line(shell));
+    next.push_str(&shell_install_line(shell, auto_capture));
     next.push_str("\n# sessionbus end\n");
     fs::write(path, next).with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
 
-fn shell_install_line(shell: ShellKind) -> &'static str {
+fn shell_install_line(shell: ShellKind, auto_capture: bool) -> String {
+    let suffix = if auto_capture { " --auto-capture" } else { "" };
     match shell {
-        ShellKind::Bash => "eval \"$(aictx shell-init bash)\"",
-        ShellKind::Zsh => "eval \"$(aictx shell-init zsh)\"",
-        ShellKind::Fish => "aictx shell-init fish | source",
+        ShellKind::Bash => format!("eval \"$(aictx shell-init bash{suffix})\""),
+        ShellKind::Zsh => format!("eval \"$(aictx shell-init zsh{suffix})\""),
+        ShellKind::Fish => format!("aictx shell-init fish{suffix} | source"),
     }
 }
 
@@ -1209,6 +1323,49 @@ async fn run_and_capture(client: &ApiClient, session_id: &str, command: &[String
     } else if !output.status.success() {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+async fn observe_command(
+    client: &ApiClient,
+    session_id: &str,
+    command: &[String],
+    exit_code: Option<i32>,
+    duration_ms: Option<u128>,
+    shell: Option<String>,
+) -> Result<()> {
+    let joined = command.join(" ");
+    let mut body = format!("$ {}", joined);
+    if let Some(exit_code) = exit_code {
+        body.push_str(&format!("\nexit_code\t{}", exit_code));
+    }
+    if let Some(duration_ms) = duration_ms {
+        body.push_str(&format!("\nduration_ms\t{}", duration_ms));
+    }
+    if let Some(shell) = shell.as_deref() {
+        body.push_str(&format!("\nshell\t{}", shell));
+    }
+    let artifact = client
+        .add_artifact(
+            session_id,
+            CreateArtifactRequest {
+                kind: ArtifactKind::ToolInvocation,
+                title: Some(joined.clone()),
+                uri: None,
+                body: Some(body),
+                metadata: json!({
+                    "source": "shell-hook",
+                    "command": command,
+                    "command_line": joined,
+                    "exit_code": exit_code,
+                    "duration_ms": duration_ms,
+                    "shell": shell
+                }),
+                snapshot: true,
+            },
+        )
+        .await?;
+    println!("{}", artifact.id);
     Ok(())
 }
 
