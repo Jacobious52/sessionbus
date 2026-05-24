@@ -88,8 +88,8 @@ the browser.
 resolution. `aictx mcp` starts or reuses the local daemon, then runs a stdio MCP
 server with tools for current session lookup, dogfood handoffs, pack rendering,
 artifacts, events, workspace facts, notes, decisions, and coordination messages.
-It also exposes `sessionbus://current/pack?profile=generic` as a readable
-resource.
+It also exposes `sessionbus://current/pack?profile=generic` and
+`sessionbus://current/dogfood?profile=generic` as readable resources.
 
 ## Coordination boundary
 

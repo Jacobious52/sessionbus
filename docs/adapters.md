@@ -62,6 +62,8 @@ Resources:
 
 - `sessionbus://current/pack?profile=generic`: Markdown context pack for the
   current session.
+- `sessionbus://current/dogfood?profile=generic`: fresh Markdown handoff that
+  captures workspace state before rendering.
 
 This is the preferred first bridge for AI tools that already understand MCP.
 Vendor-specific adapters can build on the same capability model later.

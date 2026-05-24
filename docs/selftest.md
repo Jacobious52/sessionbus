@@ -35,7 +35,7 @@ for Rust subprocesses.
   show, pack, export, import, switch/use, sessions/list active, and close.
 - Pack redaction, profile-specific context content, and JSON importability.
 - MCP stdio initialize, tools/list, tools/call, dogfood handoff,
-  resources/list, resources/read, richer Sessionbus tools, and
+  resources/list, pack and dogfood resources/read, richer Sessionbus tools, and
   default daemon startup flow.
 - ACP bridge registration.
 - NDJSON event stream contents.

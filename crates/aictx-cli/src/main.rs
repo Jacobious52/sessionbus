@@ -1778,6 +1778,12 @@ async fn handle_mcp_request(client: &ApiClient, request: Value) -> Option<Value>
                     "name": "Current Sessionbus Pack",
                     "description": "Markdown handoff for the current durable engineering task",
                     "mimeType": "text/markdown"
+                },
+                {
+                    "uri": "sessionbus://current/dogfood?profile=generic",
+                    "name": "Current Sessionbus Dogfood Handoff",
+                    "description": "Fresh handoff that captures workspace state before rendering",
+                    "mimeType": "text/markdown"
                 }
             ]
         })),
@@ -2139,10 +2145,42 @@ async fn mcp_tool_call(client: &ApiClient, params: Value) -> Result<String> {
 }
 
 async fn mcp_resource_read(client: &ApiClient, uri: &str) -> Result<Value> {
-    if !uri.starts_with("sessionbus://current/pack") {
+    let profile = mcp_resource_profile(uri)?
+        .parse()
+        .map_err(anyhow::Error::msg)?;
+    let session_id = resolve_session(None)?;
+    let text = if uri.starts_with("sessionbus://current/pack") {
+        client.pack(&session_id, profile).await?.markdown
+    } else if uri.starts_with("sessionbus://current/dogfood") {
+        let handoff = prepare_dogfood_handoff(client, &session_id, profile, None).await?;
+        let artifacts = handoff
+            .artifacts
+            .iter()
+            .map(|artifact| format!("{}={}", artifact.label, artifact.id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("artifacts: {}\n\n{}", artifacts, handoff.pack.markdown)
+    } else {
+        return Err(anyhow!("unknown Sessionbus MCP resource: {uri}"));
+    };
+    Ok(json!({
+        "contents": [
+            {
+                "uri": uri,
+                "mimeType": "text/markdown",
+                "text": text
+            }
+        ]
+    }))
+}
+
+fn mcp_resource_profile(uri: &str) -> Result<&str> {
+    if !uri.starts_with("sessionbus://current/pack")
+        && !uri.starts_with("sessionbus://current/dogfood")
+    {
         return Err(anyhow!("unknown Sessionbus MCP resource: {uri}"));
     }
-    let profile = uri
+    Ok(uri
         .split('?')
         .nth(1)
         .and_then(|query| {
@@ -2151,20 +2189,7 @@ async fn mcp_resource_read(client: &ApiClient, uri: &str) -> Result<Value> {
                 (key == "profile").then_some(value)
             })
         })
-        .unwrap_or("generic")
-        .parse()
-        .map_err(anyhow::Error::msg)?;
-    let session_id = resolve_session(None)?;
-    let pack = client.pack(&session_id, profile).await?;
-    Ok(json!({
-        "contents": [
-            {
-                "uri": uri,
-                "mimeType": "text/markdown",
-                "text": pack.markdown
-            }
-        ]
-    }))
+        .unwrap_or("generic"))
 }
 
 fn mcp_session_id(arguments: &Value) -> Result<String> {

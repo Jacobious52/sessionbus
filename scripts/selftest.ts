@@ -950,6 +950,7 @@ async function runCliE2e() {
     const packTool = responses.find((response) => response.id === 3);
     const resources = responses.find((response) => response.id === 4);
     const resource = responses.find((response) => response.id === 5);
+    const dogfoodResource = responses.find((response) => response.id === 11);
     const workspaceTool = responses.find((response) => response.id === 6);
     const artifactsTool = responses.find((response) => response.id === 7);
     const eventsTool = responses.find((response) => response.id === 8);
@@ -970,7 +971,11 @@ async function runCliE2e() {
     }
     assertIncludes(JSON.stringify(packTool), "Selftest continuity", "MCP pack tool");
     assertIncludes(JSON.stringify(resources), "sessionbus://current/pack", "MCP resources list");
+    assertIncludes(JSON.stringify(resources), "sessionbus://current/dogfood", "MCP dogfood resource list");
     assertIncludes(JSON.stringify(resource), "Selftest continuity", "MCP resource read");
+    assertIncludes(JSON.stringify(dogfoodResource), "Selftest continuity", "MCP dogfood resource title");
+    assertIncludes(JSON.stringify(dogfoodResource), "workspace watch", "MCP dogfood resource workspace");
+    assertIncludes(JSON.stringify(dogfoodResource), "git diff", "MCP dogfood resource diff");
     assertIncludes(JSON.stringify(workspaceTool), "service.yaml", "MCP workspace tool");
     assertIncludes(JSON.stringify(artifactsTool), "service.yaml", "MCP artifacts tool");
     assertIncludes(JSON.stringify(eventsTool), "session.created", "MCP events tool");
@@ -1263,6 +1268,12 @@ async function runMcpExchange(
           note: "MCP dogfood handoff",
         },
       },
+    },
+    {
+      jsonrpc: "2.0",
+      id: 11,
+      method: "resources/read",
+      params: { uri: "sessionbus://current/dogfood?profile=generic" },
     },
   ];
   for (const request of requests) {
