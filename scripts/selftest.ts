@@ -940,6 +940,7 @@ async function runCliE2e() {
     const artifactsTool = responses.find((response) => response.id === 7);
     const eventsTool = responses.find((response) => response.id === 8);
     const messageTool = responses.find((response) => response.id === 9);
+    const dogfoodTool = responses.find((response) => response.id === 10);
     if (!initialize?.result?.serverInfo?.name?.includes("sessionbus")) {
       throw new Error(`missing MCP initialize response: ${JSON.stringify(initialize)}`);
     }
@@ -948,7 +949,8 @@ async function runCliE2e() {
       !toolNames.includes("sessionbus_pack") ||
       !toolNames.includes("sessionbus_note") ||
       !toolNames.includes("sessionbus_events") ||
-      !toolNames.includes("sessionbus_message")
+      !toolNames.includes("sessionbus_message") ||
+      !toolNames.includes("sessionbus_dogfood")
     ) {
       throw new Error(`missing Sessionbus MCP tools: ${JSON.stringify(toolNames)}`);
     }
@@ -959,6 +961,10 @@ async function runCliE2e() {
     assertIncludes(JSON.stringify(artifactsTool), "service.yaml", "MCP artifacts tool");
     assertIncludes(JSON.stringify(eventsTool), "session.created", "MCP events tool");
     assertIncludes(JSON.stringify(messageTool), "coordination message", "MCP message tool");
+    assertIncludes(JSON.stringify(dogfoodTool), "MCP dogfood handoff", "MCP dogfood note");
+    assertIncludes(JSON.stringify(dogfoodTool), "workspace watch", "MCP dogfood workspace snapshot");
+    assertIncludes(JSON.stringify(dogfoodTool), "git diff", "MCP dogfood git diff");
+    assertIncludes(JSON.stringify(dogfoodTool), "artifacts:", "MCP dogfood artifact summary");
   });
 
   await manualStep("exercise MCP ensure-daemon startup", async () => {
@@ -1217,6 +1223,18 @@ async function runMcpExchange(
           topic: "coordination",
           text: "coordination message from MCP",
           requires_response: true,
+        },
+      },
+    },
+    {
+      jsonrpc: "2.0",
+      id: 10,
+      method: "tools/call",
+      params: {
+        name: "sessionbus_dogfood",
+        arguments: {
+          profile: "generic",
+          note: "MCP dogfood handoff",
         },
       },
     },

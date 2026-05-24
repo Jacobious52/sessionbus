@@ -92,8 +92,9 @@ target/debug/aictx install codex
 target/debug/aictx install codex --write
 ```
 
-The MCP server exposes tools for current session lookup, pack rendering,
-artifacts, events, workspace facts, notes, decisions, and coordination messages.
+The MCP server exposes tools for current session lookup, dogfood handoffs, pack
+rendering, artifacts, events, workspace facts, notes, decisions, and
+coordination messages.
 
 ## Daily Workflow
 

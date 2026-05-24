@@ -49,6 +49,7 @@ Tools:
 - `sessionbus_current`: read the current durable engineering session.
 - `sessionbus_pack`: render a deterministic context pack.
 - `sessionbus_handoff`: render a target-specific handoff.
+- `sessionbus_dogfood`: capture workspace handoff state, then render a pack.
 - `sessionbus_artifacts`: list current-session artifacts.
 - `sessionbus_events`: list durable event-log entries.
 - `sessionbus_workspace`: inspect the local git workspace.

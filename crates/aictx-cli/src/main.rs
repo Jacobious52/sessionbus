@@ -1618,22 +1618,56 @@ async fn dogfood_handoff(
     preview: bool,
     format: OutputFormat,
 ) -> Result<()> {
+    let result = prepare_dogfood_handoff(client, session_id, profile, note).await?;
+    for artifact in &result.artifacts {
+        eprintln!("artifact\t{}\t{}", artifact.label, artifact.id);
+    }
+    print_pack(result.pack, format, preview)
+}
+
+async fn prepare_dogfood_handoff(
+    client: &ApiClient,
+    session_id: &str,
+    profile: PackProfile,
+    note: Option<String>,
+) -> Result<DogfoodHandoff> {
+    let artifacts = capture_dogfood_artifacts(client, session_id, note).await?;
+    let mut pack = client.pack(session_id, profile).await?;
+    apply_local_redaction(&mut pack)?;
+    Ok(DogfoodHandoff { artifacts, pack })
+}
+
+async fn capture_dogfood_artifacts(
+    client: &ApiClient,
+    session_id: &str,
+    note: Option<String>,
+) -> Result<Vec<DogfoodArtifact>> {
     let workspace = detect_workspace()?;
+    let mut artifacts = Vec::new();
     let workspace_artifact = client
         .add_artifact(
             session_id,
             workspace_watch_artifact(Path::new(&workspace.root))?,
         )
         .await?;
-    eprintln!("artifact\tworkspace\t{}", workspace_artifact.id);
+    artifacts.push(DogfoodArtifact {
+        label: "workspace".to_string(),
+        id: workspace_artifact.id,
+    });
 
     if git_output(["status", "--short"])?.is_some() {
         let diff_artifact = client
             .add_artifact(session_id, git_diff_artifact()?)
             .await?;
-        eprintln!("artifact\tgit_diff\t{}", diff_artifact.id);
+        artifacts.push(DogfoodArtifact {
+            label: "git_diff".to_string(),
+            id: diff_artifact.id,
+        });
     } else {
-        eprintln!("artifact\tgit_diff\tskipped-clean-worktree");
+        artifacts.push(DogfoodArtifact {
+            label: "git_diff".to_string(),
+            id: "skipped-clean-worktree".to_string(),
+        });
     }
 
     if let Some(note) = note {
@@ -1650,12 +1684,23 @@ async fn dogfood_handoff(
                 },
             )
             .await?;
-        eprintln!("artifact\tnote\t{}", note_artifact.id);
+        artifacts.push(DogfoodArtifact {
+            label: "note".to_string(),
+            id: note_artifact.id,
+        });
     }
 
-    let mut pack = client.pack(session_id, profile).await?;
-    apply_local_redaction(&mut pack)?;
-    print_pack(pack, format, preview)
+    Ok(artifacts)
+}
+
+struct DogfoodArtifact {
+    label: String,
+    id: String,
+}
+
+struct DogfoodHandoff {
+    artifacts: Vec<DogfoodArtifact>,
+    pack: ContextPack,
 }
 
 struct DaemonGuard {
@@ -1869,6 +1914,22 @@ fn mcp_tools() -> Value {
             }
         },
         {
+            "name": "sessionbus_dogfood",
+            "description": "Capture current workspace handoff state, then render a deterministic pack for the next AI tool.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string" },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["generic", "chatgpt", "claude", "cursor", "acp"]
+                    },
+                    "note": { "type": "string" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "sessionbus_artifacts",
             "description": "List artifacts for the current or selected session.",
             "inputSchema": {
@@ -1995,6 +2056,31 @@ async fn mcp_tool_call(client: &ApiClient, params: Value) -> Result<String> {
                 .parse()
                 .map_err(anyhow::Error::msg)?;
             Ok(client.pack(&session_id, profile).await?.markdown)
+        }
+        "sessionbus_dogfood" => {
+            let session_id = mcp_session_id(&arguments)?;
+            let profile = arguments
+                .get("profile")
+                .and_then(Value::as_str)
+                .unwrap_or("generic")
+                .parse()
+                .map_err(anyhow::Error::msg)?;
+            let note = arguments
+                .get("note")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            let handoff = prepare_dogfood_handoff(client, &session_id, profile, note).await?;
+            let artifacts = handoff
+                .artifacts
+                .iter()
+                .map(|artifact| format!("{}={}", artifact.label, artifact.id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Ok(format!(
+                "artifacts: {}\n\n{}",
+                artifacts,
+                handoff.pack.markdown.trim_end()
+            ))
         }
         "sessionbus_artifacts" => {
             let session_id = mcp_session_id(&arguments)?;

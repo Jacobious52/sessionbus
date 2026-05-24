@@ -34,8 +34,9 @@ for Rust subprocesses.
   generation, workspace watch snapshot, repo-local active session resolution,
   show, pack, export, import, switch/use, sessions/list active, and close.
 - Pack redaction, profile-specific context content, and JSON importability.
-- MCP stdio initialize, tools/list, tools/call, resources/list, resources/read,
-  richer Sessionbus tools, and `--ensure-daemon` startup flow.
+- MCP stdio initialize, tools/list, tools/call, dogfood handoff,
+  resources/list, resources/read, richer Sessionbus tools, and
+  `--ensure-daemon` startup flow.
 - ACP bridge registration.
 - NDJSON event stream contents.
 - Report output redaction without truncating the raw command output used by
