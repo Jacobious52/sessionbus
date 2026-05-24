@@ -44,6 +44,14 @@ cargo build --workspace
 target/debug/aictx setup
 ```
 
+Or install the CLI locally:
+
+```bash
+PREFIX="$HOME/.local" ./scripts/install.sh
+export PATH="$HOME/.local/bin:$PATH"
+aictx setup
+```
+
 For an opt-in local install that writes Codex MCP config and shell helpers:
 
 ```bash
@@ -115,6 +123,14 @@ aictx doctor
 
 `aictx doctor` and the dashboard both show registered integrations, declared
 capabilities, and recent adapter activity.
+
+Shell completions:
+
+```bash
+aictx completions zsh > ~/.zfunc/_aictx
+aictx completions bash > ~/.local/share/bash-completion/completions/aictx
+aictx completions fish > ~/.config/fish/completions/aictx.fish
+```
 
 Useful commands:
 
@@ -193,6 +209,7 @@ Current workspace:
 - `crates/sessionbus-acp-bridge`: ACP bridge skeleton.
 - `packages/adapter-sdk-ts`: TypeScript adapter SDK.
 - `adapters/*`: example adapters.
+- `scripts/install.sh`: local source install helper.
 
 ## Status
 

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{generate, Shell as CompletionShell};
 use serde_json::{json, Value};
 use sessionbus_core::{
     AdapterCapability, AdapterProtocol, Artifact, ArtifactKind, CapabilityDescriptor, ContextPack,
@@ -47,6 +48,10 @@ enum CommandKind {
     },
     Status,
     Doctor,
+    Completions {
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
     Setup {
         #[arg(long)]
         write: bool,
@@ -316,6 +321,17 @@ async fn main() -> Result<()> {
             let store = SessionbusStore::open_path(db.unwrap_or_else(default_db_path)).await?;
             serve(bind, store).await
         }
+        CommandKind::Completions { shell } => {
+            let mut command = Cli::command();
+            let mut output = Vec::new();
+            generate(shell, &mut command, "aictx", &mut output);
+            if let Err(error) = io::stdout().write_all(&output) {
+                if error.kind() != io::ErrorKind::BrokenPipe {
+                    return Err(error.into());
+                }
+            }
+            Ok(())
+        }
         other => {
             let client = ApiClient::new(cli.api)?;
             run_command(client, other).await
@@ -326,6 +342,9 @@ async fn main() -> Result<()> {
 async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
     match command {
         CommandKind::Daemon { .. } => unreachable!("daemon handled before client dispatch"),
+        CommandKind::Completions { .. } => {
+            unreachable!("completions handled before client dispatch")
+        }
         CommandKind::Status => {
             let health = client.health().await?;
             println!("api\t{}", client.base);

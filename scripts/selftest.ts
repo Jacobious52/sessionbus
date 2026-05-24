@@ -539,6 +539,23 @@ async function runCliE2e() {
     assertIncludes(packPreview.stdout, "CLIENT_ID=[REDACTED]", "pack preview custom redaction");
   });
 
+  const completionsZsh = await checked("generate zsh completions", aictx, [
+    "completions",
+    "zsh",
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify shell completions", async () => {
+    assertIncludes(completionsZsh.stdout, "#compdef aictx", "zsh completion header");
+    assertIncludes(completionsZsh.stdout, "setup", "setup completion");
+  });
+
+  const installDryRun = await checked("dry run install script", "bash", [
+    "scripts/install.sh",
+  ], { env: { ...baseEnv, DRY_RUN: "1", PREFIX: join(tempRoot, "install-prefix") }, cwd: root });
+  await manualStep("verify install dry run", async () => {
+    assertIncludes(installDryRun.stdout, "cargo install", "install cargo command");
+    assertIncludes(installDryRun.stdout, "aictx setup", "install next step");
+  });
+
   const installCodex = await checked("print codex install helper", aictx, [
     "--api",
     api,
