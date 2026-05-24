@@ -193,6 +193,20 @@ async function runCliE2e() {
     assertIncludes(integrationDoctor.stdout, "session_observe", "doctor adapter capability");
   });
 
+  const setupPreview = await checked("run setup preview", aictx, [
+    "--api",
+    api,
+    "setup",
+    "--skip-codex",
+    "--skip-shell",
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify setup preview", async () => {
+    assertIncludes(setupPreview.stdout, "daemon\tok", "setup daemon health");
+    assertIncludes(setupPreview.stdout, "adapter\tregistered\tsessionbus.terminal", "setup terminal adapter");
+    assertIncludes(setupPreview.stdout, "adapter\tregistered\tsessionbus.filesystem", "setup filesystem adapter");
+    assertIncludes(setupPreview.stdout, `${api}/dashboard`, "setup dashboard URL");
+  });
+
   await checked("add note through CLI", aictx, [
     "--api",
     api,
@@ -635,6 +649,31 @@ async function runCliE2e() {
   await manualStep("verify written shell auto capture install config", async () => {
     const rc = await readFile(shellAutoRcPath, "utf8");
     assertIncludes(rc, "aictx shell-init zsh --auto-capture", "written shell auto init");
+  });
+
+  const setupCodexConfigPath = join(tempRoot, "setup-codex-config.toml");
+  const setupShellRcPath = join(tempRoot, "setup-zshrc");
+  const setupWrite = await checked("run setup write workflow", aictx, [
+    "--api",
+    api,
+    "setup",
+    "--write",
+    "--auto-capture",
+    "--config",
+    setupCodexConfigPath,
+    "--rc",
+    setupShellRcPath,
+    "--open-dashboard",
+  ], { env: { ...baseEnv, SESSIONBUS_OPEN_COMMAND: "/bin/echo" }, cwd: workspace });
+  await manualStep("verify setup write workflow", async () => {
+    assertIncludes(setupWrite.stdout, "codex\tinstalled", "setup codex installed");
+    assertIncludes(setupWrite.stdout, "shell\tinstalled", "setup shell installed");
+    assertIncludes(setupWrite.stdout, "adapter\tregistered\tsessionbus.terminal", "setup adapter registered");
+    assertIncludes(setupWrite.stdout, `${api}/dashboard`, "setup opened dashboard");
+    const codexConfig = await readFile(setupCodexConfigPath, "utf8");
+    assertIncludes(codexConfig, "[mcp_servers.sessionbus]", "setup codex config block");
+    const shellRc = await readFile(setupShellRcPath, "utf8");
+    assertIncludes(shellRc, "aictx shell-init zsh --auto-capture", "setup shell auto capture");
   });
 
   const dashboard = await checked("open dashboard through CLI", aictx, [

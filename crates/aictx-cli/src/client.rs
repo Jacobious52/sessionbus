@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use reqwest::StatusCode;
 use serde_json::json;
 use sessionbus_core::{
-    Artifact, BusEvent, ContextPack, CreateArtifactRequest, CreateDecisionRequest,
-    CreateSessionRequest, Decision, PackProfile, Session, SessionStatus,
+    Artifact, BusEvent, CapabilityDescriptor, ContextPack, CreateArtifactRequest,
+    CreateDecisionRequest, CreateSessionRequest, Decision, PackProfile, Session, SessionStatus,
     UpdateSessionStatusRequest,
 };
 
@@ -95,6 +95,13 @@ impl ApiClient {
             .send()
             .await?;
         decode_response(response).await
+    }
+
+    pub(crate) async fn register_adapter(
+        &self,
+        descriptor: CapabilityDescriptor,
+    ) -> Result<serde_json::Value> {
+        self.post("/adapters/register", &descriptor).await
     }
 
     pub(crate) async fn update_session_status(

@@ -41,10 +41,16 @@ orchestration platform.
 
 ```bash
 cargo build --workspace
-target/debug/aictx mcp --ensure-daemon
+target/debug/aictx setup
 ```
 
-In another terminal:
+For an opt-in local install that writes Codex MCP config and shell helpers:
+
+```bash
+target/debug/aictx setup --write --auto-capture --open-dashboard
+```
+
+Then start using a durable task:
 
 ```bash
 target/debug/aictx doctor

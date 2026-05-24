@@ -2,9 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
 use sessionbus_core::{
-    Artifact, ArtifactKind, ContextPack, CreateArtifactRequest, CreateDecisionRequest,
-    CreateSessionRequest, Decision, PackProfile, RedactionPolicy, Session, SessionStatus,
-    WorkspaceInfo,
+    AdapterCapability, AdapterProtocol, Artifact, ArtifactKind, CapabilityDescriptor, ContextPack,
+    CreateArtifactRequest, CreateDecisionRequest, CreateSessionRequest, Decision, PackProfile,
+    RedactionPolicy, Session, SessionStatus, WorkspaceInfo,
 };
 use sessionbus_daemon::{default_db_path, serve};
 use sessionbus_store::SessionbusStore;
@@ -47,6 +47,26 @@ enum CommandKind {
     },
     Status,
     Doctor,
+    Setup {
+        #[arg(long)]
+        write: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        rc: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = ShellKind::Zsh)]
+        shell: ShellKind,
+        #[arg(long)]
+        auto_capture: bool,
+        #[arg(long)]
+        open_dashboard: bool,
+        #[arg(long)]
+        skip_codex: bool,
+        #[arg(long)]
+        skip_shell: bool,
+        #[arg(long)]
+        skip_adapters: bool,
+    },
     Start {
         #[arg(long)]
         repo: bool,
@@ -326,6 +346,33 @@ async fn run_command(client: ApiClient, command: CommandKind) -> Result<()> {
             Ok(())
         }
         CommandKind::Doctor => run_doctor(&client).await,
+        CommandKind::Setup {
+            write,
+            config,
+            rc,
+            shell,
+            auto_capture,
+            open_dashboard: should_open_dashboard,
+            skip_codex,
+            skip_shell,
+            skip_adapters,
+        } => {
+            run_setup(
+                &client,
+                SetupOptions {
+                    write,
+                    config,
+                    rc,
+                    shell,
+                    auto_capture,
+                    open_dashboard: should_open_dashboard,
+                    skip_codex,
+                    skip_shell,
+                    skip_adapters,
+                },
+            )
+            .await
+        }
         CommandKind::Start {
             repo: _repo,
             title,
@@ -648,6 +695,104 @@ async fn run_doctor(client: &ApiClient) -> Result<()> {
         Err(error) => println!("adapters\terror\t{}", error),
     }
     Ok(())
+}
+
+struct SetupOptions {
+    write: bool,
+    config: Option<PathBuf>,
+    rc: Option<PathBuf>,
+    shell: ShellKind,
+    auto_capture: bool,
+    open_dashboard: bool,
+    skip_codex: bool,
+    skip_shell: bool,
+    skip_adapters: bool,
+}
+
+async fn run_setup(client: &ApiClient, options: SetupOptions) -> Result<()> {
+    let started = ensure_daemon_running(client).await?;
+    println!(
+        "daemon\t{}\t{}",
+        if started { "started" } else { "ok" },
+        client.base
+    );
+
+    if options.write && !options.skip_codex {
+        let exe = std::env::current_exe()
+            .ok()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "aictx".to_string());
+        let path = options.config.unwrap_or_else(default_codex_config_path);
+        write_codex_config(&path, &codex_mcp_block(&exe))?;
+        println!("codex\tinstalled\t{}", path.display());
+    } else if options.skip_codex {
+        println!("codex\tskipped");
+    } else {
+        println!("codex\tpreview\tuse --write to install MCP config");
+    }
+
+    if options.write && !options.skip_shell {
+        let path = options
+            .rc
+            .unwrap_or_else(|| default_shell_rc_path(options.shell));
+        write_shell_config(&path, options.shell, options.auto_capture)?;
+        println!("shell\tinstalled\t{}", path.display());
+    } else if options.skip_shell {
+        println!("shell\tskipped");
+    } else {
+        println!("shell\tpreview\tuse --write to install shell helpers");
+    }
+
+    if !options.skip_adapters {
+        for descriptor in bundled_adapter_descriptors() {
+            let adapter_id = descriptor.adapter_id.clone();
+            client.register_adapter(descriptor).await?;
+            println!("adapter\tregistered\t{}", adapter_id);
+        }
+    } else {
+        println!("adapters\tskipped");
+    }
+
+    let url = format!("{}/dashboard", client.base);
+    println!("dashboard\t{}", url);
+    if options.open_dashboard {
+        open_dashboard(&url)?;
+    }
+    Ok(())
+}
+
+fn bundled_adapter_descriptors() -> Vec<CapabilityDescriptor> {
+    vec![
+        CapabilityDescriptor {
+            adapter_id: "sessionbus.terminal".to_string(),
+            protocol: AdapterProtocol::NativeHttp,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: vec![
+                AdapterCapability::WriteArtifact,
+                AdapterCapability::StreamUpdates,
+                AdapterCapability::SessionObserve,
+            ],
+            metadata: json!({
+                "runtime": "bun",
+                "bundled": true,
+                "path": "adapters/terminal"
+            }),
+        },
+        CapabilityDescriptor {
+            adapter_id: "sessionbus.filesystem".to_string(),
+            protocol: AdapterProtocol::Filesystem,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            capabilities: vec![
+                AdapterCapability::ReadWorkspace,
+                AdapterCapability::WriteArtifact,
+            ],
+            metadata: json!({
+                "runtime": "bun",
+                "bundled": true,
+                "path": "adapters/filesystem"
+            }),
+        },
+    ]
 }
 
 fn parse_profile(value: &str) -> Result<PackProfile> {
@@ -1465,6 +1610,39 @@ async fn ensure_daemon(client: &ApiClient) -> Result<Option<DaemonGuard>> {
             ));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn ensure_daemon_running(client: &ApiClient) -> Result<bool> {
+    if client.health().await.is_ok() {
+        return Ok(false);
+    }
+
+    let bind = api_bind_addr(&client.base)?;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .arg("daemon")
+        .arg("--bind")
+        .arg(bind.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Ok(db) = std::env::var("SESSIONBUS_DB") {
+        command.arg("--db").arg(db);
+    }
+    command.spawn().with_context(|| "start sessionbus daemon")?;
+    let started = Instant::now();
+    loop {
+        if client.health().await.is_ok() {
+            return Ok(true);
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err(anyhow!(
+                "sessionbus daemon did not become healthy at {}",
+                client.base
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
