@@ -173,6 +173,26 @@ async function runCliE2e() {
     assertIncludes(terminalRegister.stdout, "sessionbus.terminal", "terminal adapter id");
   });
 
+  const adapters = await fetch(`${api}/adapters`).then((response) => response.json());
+  await manualStep("verify adapter health endpoint", async () => {
+    if (!Array.isArray(adapters) || adapters.length === 0) {
+      throw new Error(`expected adapters, got ${JSON.stringify(adapters)}`);
+    }
+    assertIncludes(JSON.stringify(adapters), "sessionbus.terminal", "adapter health id");
+    assertIncludes(JSON.stringify(adapters), "session_observe", "adapter health capability");
+    assertIncludes(JSON.stringify(adapters), "registered", "adapter initial health status");
+  });
+
+  const integrationDoctor = await checked("run doctor with adapter health", aictx, [
+    "--api",
+    api,
+    "doctor",
+  ], { env: baseEnv, cwd: workspace });
+  await manualStep("verify doctor adapter health", async () => {
+    assertIncludes(integrationDoctor.stdout, "adapter\tsessionbus.terminal", "doctor adapter");
+    assertIncludes(integrationDoctor.stdout, "session_observe", "doctor adapter capability");
+  });
+
   await checked("add note through CLI", aictx, [
     "--api",
     api,
@@ -633,6 +653,7 @@ async function runCliE2e() {
     assertIncludes(page, "Render Pack", "dashboard pack control");
     assertIncludes(page, "Copy Pack", "dashboard copy control");
     assertIncludes(page, "Recent Artifacts", "dashboard artifact timeline");
+    assertIncludes(page, "Integrations", "dashboard integrations panel");
     assertIncludes(page, "Close", "dashboard close control");
     const data = await fetch(`${api}/api/dashboard`).then((response) => response.json());
     if (!Array.isArray(data.sessions) || data.sessions.length === 0) {
@@ -641,6 +662,10 @@ async function runCliE2e() {
     if (!Array.isArray(data.recent_artifacts)) {
       throw new Error(`expected dashboard recent_artifacts, got ${JSON.stringify(data)}`);
     }
+    if (!Array.isArray(data.adapters) || data.adapters.length === 0) {
+      throw new Error(`expected dashboard adapters, got ${JSON.stringify(data)}`);
+    }
+    assertIncludes(JSON.stringify(data.adapters), "sessionbus.terminal", "dashboard adapter health");
     const dashboardSession = await fetch(`${api}/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },

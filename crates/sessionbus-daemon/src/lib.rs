@@ -5,11 +5,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sessionbus_core::{
-    CapabilityDescriptor, ContextPack, CreateArtifactRequest, CreateDecisionRequest,
-    CreateSessionRequest, PackProfile, UpdateSessionStatusRequest,
+    AdapterRegistration, BusEvent, CapabilityDescriptor, ContextPack, CreateArtifactRequest,
+    CreateDecisionRequest, CreateSessionRequest, PackProfile, UpdateSessionStatusRequest,
 };
 use sessionbus_store::SessionbusStore;
 use std::{net::SocketAddr, path::PathBuf};
@@ -37,6 +37,7 @@ pub fn router(store: SessionbusStore) -> Router {
         )
         .route("/sessions/:id/pack", post(pack_session))
         .route("/events", get(events))
+        .route("/adapters", get(list_adapters))
         .route("/adapters/register", post(register_adapter))
         .with_state(AppState { store })
 }
@@ -90,13 +91,62 @@ async fn dashboard_api(State(state): State<AppState>) -> Result<impl IntoRespons
     });
     recent_artifacts.truncate(12);
     let events = state.store.list_events(None).await?;
+    let adapters = adapter_health(state.store.list_adapters().await?, &events);
     Ok(Json(json!({
         "service": "sessionbus-daemon",
         "tagline": "Never re-explain the same engineering task to multiple AI tools again.",
         "sessions": sessions,
         "recent_artifacts": recent_artifacts,
+        "adapters": adapters,
         "recent_events": events.into_iter().rev().take(25).collect::<Vec<_>>()
     })))
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AdapterHealth {
+    #[serde(flatten)]
+    registration: AdapterRegistration,
+    status: &'static str,
+    last_event_at: Option<chrono::DateTime<chrono::Utc>>,
+    event_count: usize,
+}
+
+fn adapter_health(adapters: Vec<AdapterRegistration>, events: &[BusEvent]) -> Vec<AdapterHealth> {
+    let mut health = Vec::with_capacity(adapters.len());
+    for registration in adapters {
+        let adapter_id = registration.descriptor.adapter_id.as_str();
+        let matching_events: Vec<&BusEvent> = events
+            .iter()
+            .filter(|event| {
+                event.source == adapter_id
+                    || event_payload_mentions_adapter(&event.payload, adapter_id)
+            })
+            .collect();
+        let last_event_at = matching_events
+            .iter()
+            .map(|event| event.created_at)
+            .max()
+            .or(Some(registration.last_seen_at));
+        let status = if matching_events.is_empty() {
+            "registered"
+        } else {
+            "active"
+        };
+        health.push(AdapterHealth {
+            registration,
+            status,
+            last_event_at,
+            event_count: matching_events.len(),
+        });
+    }
+    health
+}
+
+fn event_payload_mentions_adapter(payload: &Value, adapter_id: &str) -> bool {
+    payload
+        .pointer("/adapter/descriptor/adapter_id")
+        .and_then(Value::as_str)
+        == Some(adapter_id)
 }
 
 #[tracing::instrument(skip(state, request))]
@@ -251,6 +301,19 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       min-width: 104px;
       padding: 7px 10px;
     }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip {
+      color: var(--accent);
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
     .pack-toolbar {
       display: flex;
       gap: 10px;
@@ -333,6 +396,10 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       </section>
     </div>
     <section style="grid-column: 1 / -1;">
+      <h2>Integrations</h2>
+      <div id="adapters" class="muted">Loading integrations...</div>
+    </section>
+    <section style="grid-column: 1 / -1;">
       <h2>Recent Events</h2>
       <div id="events" class="muted">Loading events...</div>
     </section>
@@ -361,6 +428,14 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
           <div class="muted">${escapeHtml(artifact.session_id)} · ${escapeHtml(artifact.created_at)}</div>
         </div>
       `).join('') || '<div class="muted">No artifacts yet.</div>';
+      const adapters = document.querySelector('#adapters');
+      adapters.innerHTML = data.adapters.map((adapter) => `
+        <div class="event">
+          <div class="row"><strong>${escapeHtml(adapter.descriptor.adapter_id)}</strong><span class="status">${escapeHtml(adapter.status)}</span></div>
+          <div class="muted">${escapeHtml(adapter.descriptor.protocol)} · v${escapeHtml(adapter.descriptor.version)} · last seen ${escapeHtml(adapter.last_seen_at)}</div>
+          <div class="chips">${adapter.descriptor.capabilities.map((capability) => `<span class="chip">${escapeHtml(capability)}</span>`).join('')}</div>
+        </div>
+      `).join('') || '<div class="muted">No integrations registered yet.</div>';
       const events = document.querySelector('#events');
       events.innerHTML = data.recent_events.map((event) => `
         <div class="event">
@@ -575,6 +650,13 @@ async fn events(
         HeaderValue::from_static("application/x-ndjson"),
     );
     Ok((headers, body))
+}
+
+#[tracing::instrument(skip(state))]
+async fn list_adapters(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let events = state.store.list_events(None).await?;
+    let adapters = state.store.list_adapters().await?;
+    Ok(Json(adapter_health(adapters, &events)))
 }
 
 #[tracing::instrument(skip(state, descriptor))]

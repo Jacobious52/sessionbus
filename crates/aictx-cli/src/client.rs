@@ -88,6 +88,15 @@ impl ApiClient {
             .collect()
     }
 
+    pub(crate) async fn list_adapters(&self) -> Result<Vec<serde_json::Value>> {
+        let response = self
+            .http
+            .get(format!("{}/adapters", self.base))
+            .send()
+            .await?;
+        decode_response(response).await
+    }
+
     pub(crate) async fn update_session_status(
         &self,
         session_id: &str,

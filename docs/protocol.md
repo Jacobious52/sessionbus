@@ -63,6 +63,11 @@ content-addressed reference. Packs run redaction before rendering body content.
 
 ## Register an adapter
 
+`GET /adapters` returns the current adapter registrations decorated with local
+health signals such as `status`, `last_event_at`, and `event_count`.
+
+`POST /adapters/register` upserts a sidecar capability descriptor:
+
 ```json
 {
   "adapter_id": "sessionbus.acp-bridge",

@@ -104,7 +104,11 @@ The TypeScript terminal adapter exposes the same behavior as a sidecar process:
 ```bash
 bun adapters/terminal/src/index.ts register
 bun adapters/terminal/src/index.ts observe --session "$(aictx current)" --shell zsh --exit-code 0 -- cargo test
+aictx doctor
 ```
+
+`aictx doctor` and the dashboard both show registered integrations, declared
+capabilities, and recent adapter activity.
 
 Useful commands:
 

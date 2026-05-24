@@ -358,6 +358,16 @@ impl SessionbusStore {
         row.map(adapter_from_row).transpose()
     }
 
+    pub async fn list_adapters(&self) -> Result<Vec<AdapterRegistration>> {
+        let rows = sqlx::query(
+            "SELECT descriptor_json, registered_at, last_seen_at
+             FROM adapters ORDER BY last_seen_at DESC, adapter_id ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(adapter_from_row).collect()
+    }
+
     pub async fn list_events(&self, session_id: Option<&str>) -> Result<Vec<BusEvent>> {
         let rows = if let Some(session_id) = session_id {
             sqlx::query(
@@ -616,5 +626,8 @@ mod tests {
         assert_eq!(registration.descriptor.adapter_id, "terminal");
         let fetched = store.get_adapter("terminal").await.unwrap().unwrap();
         assert_eq!(fetched.descriptor.capabilities.len(), 2);
+        let adapters = store.list_adapters().await.unwrap();
+        assert_eq!(adapters.len(), 1);
+        assert_eq!(adapters[0].descriptor.adapter_id, "terminal");
     }
 }

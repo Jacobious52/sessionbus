@@ -617,6 +617,36 @@ async fn run_doctor(client: &ApiClient) -> Result<()> {
         Ok(session_id) => println!("session\t{}", session_id),
         Err(_) => println!("session\tnone"),
     }
+    match client.list_adapters().await {
+        Ok(adapters) if adapters.is_empty() => println!("adapters\tnone"),
+        Ok(adapters) => {
+            println!("adapters\t{}", adapters.len());
+            for adapter in adapters {
+                let descriptor = adapter.get("descriptor").unwrap_or(&Value::Null);
+                let id = descriptor
+                    .get("adapter_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let status = adapter
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let capabilities = descriptor
+                    .get("capabilities")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                println!("adapter\t{}\t{}\t{}", id, status, capabilities);
+            }
+        }
+        Err(error) => println!("adapters\terror\t{}", error),
+    }
     Ok(())
 }
 
