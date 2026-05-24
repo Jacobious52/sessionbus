@@ -80,6 +80,10 @@ git diff when one exists, adding an optional `--note`, and printing a redacted
 deterministic context pack to stdout. Capture bookkeeping is written to stderr
 so stdout stays pasteable.
 
+The dashboard exposes the same continuity shortcut as **Dogfood Handoff**:
+choose a session, profile, and optional note, then render a copyable handoff in
+the browser.
+
 `aictx doctor` checks daemon reachability, workspace facts, and current-session
 resolution. `aictx mcp` starts or reuses the local daemon, then runs a stdio MCP
 server with tools for current session lookup, dogfood handoffs, pack rendering,

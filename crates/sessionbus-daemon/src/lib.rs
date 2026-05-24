@@ -8,11 +8,16 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sessionbus_core::{
-    AdapterRegistration, BusEvent, CapabilityDescriptor, ContextPack, CreateArtifactRequest,
-    CreateDecisionRequest, CreateSessionRequest, PackProfile, UpdateSessionStatusRequest,
+    AdapterRegistration, Artifact, ArtifactKind, BusEvent, CapabilityDescriptor, ContextPack,
+    CreateArtifactRequest, CreateDecisionRequest, CreateSessionRequest, PackProfile,
+    UpdateSessionStatusRequest,
 };
 use sessionbus_store::SessionbusStore;
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path as FsPath, PathBuf},
+    process::Command,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -36,6 +41,7 @@ pub fn router(store: SessionbusStore) -> Router {
             post(add_decision).get(list_decisions),
         )
         .route("/sessions/:id/pack", post(pack_session))
+        .route("/sessions/:id/dogfood", post(dogfood_session))
         .route("/events", get(events))
         .route("/adapters", get(list_adapters))
         .route("/adapters/register", post(register_adapter))
@@ -288,7 +294,7 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
     .control-grid {
       display: grid;
       gap: 12px;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
     .session-actions {
       display: flex;
@@ -377,6 +383,19 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
             <option value="acp">ACP</option>
           </select>
           <button type="submit">Render</button>
+        </form>
+        <form id="dogfood-form">
+          <strong>Dogfood Handoff</strong>
+          <select name="session_id" class="session-select"></select>
+          <select name="profile">
+            <option value="generic">Generic</option>
+            <option value="chatgpt">ChatGPT</option>
+            <option value="claude">Claude</option>
+            <option value="cursor">Cursor</option>
+            <option value="acp">ACP</option>
+          </select>
+          <textarea name="note" placeholder="Optional handoff note"></textarea>
+          <button type="submit">Dogfood</button>
         </form>
       </div>
       <div class="pack-toolbar">
@@ -494,6 +513,22 @@ const DASHBOARD_HTML: &str = r#"<!doctype html>
       }).then((response) => response.json());
       document.querySelector('#pack-output').textContent = pack.markdown;
       document.querySelector('#pack-status').textContent = `Rendered ${form.get('profile')} pack`;
+      await load();
+    });
+    document.querySelector('#dogfood-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const handoff = await fetch(`/sessions/${encodeURIComponent(form.get('session_id'))}/dogfood`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          profile: form.get('profile'),
+          note: form.get('note') || undefined
+        })
+      }).then((response) => response.json());
+      document.querySelector('#pack-output').textContent = handoff.pack.markdown;
+      document.querySelector('#pack-status').textContent = `Dogfood handoff captured ${handoff.artifacts.length} artifacts`;
+      event.currentTarget.reset();
       await load();
     });
     document.querySelector('#sessions').addEventListener('click', async (event) => {
@@ -626,6 +661,156 @@ async fn pack_session(
     Json(request): Json<PackRequest>,
 ) -> Result<Json<ContextPack>, ApiError> {
     Ok(Json(state.store.pack_session(&id, request.profile).await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct DogfoodRequest {
+    profile: PackProfile,
+    note: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DogfoodArtifact {
+    label: String,
+    id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DogfoodResponse {
+    artifacts: Vec<DogfoodArtifact>,
+    pack: ContextPack,
+}
+
+#[tracing::instrument(skip(state, request))]
+async fn dogfood_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<DogfoodRequest>,
+) -> Result<Json<DogfoodResponse>, ApiError> {
+    state
+        .store
+        .get_session(&id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("session not found: {id}")))?;
+    let artifacts = capture_dogfood_artifacts(&state.store, &id, request.note).await?;
+    let pack = state.store.pack_session(&id, request.profile).await?;
+    Ok(Json(DogfoodResponse { artifacts, pack }))
+}
+
+async fn capture_dogfood_artifacts(
+    store: &SessionbusStore,
+    session_id: &str,
+    note: Option<String>,
+) -> Result<Vec<DogfoodArtifact>, ApiError> {
+    let session = store
+        .get_session(session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("session not found: {session_id}")))?;
+    let mut artifacts = Vec::new();
+    if let Some(workspace) = session.workspace.as_ref() {
+        let root = FsPath::new(&workspace.root);
+        let workspace_artifact = store
+            .add_artifact(session_id, workspace_watch_artifact(root)?)
+            .await?;
+        artifacts.push(summary_artifact("workspace", &workspace_artifact));
+        if git_output_in(root, ["status", "--short"])?.is_some() {
+            let diff_artifact = store
+                .add_artifact(session_id, git_diff_artifact(root)?)
+                .await?;
+            artifacts.push(summary_artifact("git_diff", &diff_artifact));
+        } else {
+            artifacts.push(DogfoodArtifact {
+                label: "git_diff".to_string(),
+                id: "skipped-clean-worktree".to_string(),
+            });
+        }
+    }
+
+    if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
+        let note_artifact = store
+            .add_artifact(
+                session_id,
+                CreateArtifactRequest {
+                    kind: ArtifactKind::Note,
+                    title: Some("dashboard dogfood note".to_string()),
+                    uri: None,
+                    body: Some(note),
+                    metadata: json!({ "source": "dashboard-dogfood" }),
+                    snapshot: true,
+                },
+            )
+            .await?;
+        artifacts.push(summary_artifact("note", &note_artifact));
+    }
+    Ok(artifacts)
+}
+
+fn summary_artifact(label: &str, artifact: &Artifact) -> DogfoodArtifact {
+    DogfoodArtifact {
+        label: label.to_string(),
+        id: artifact.id.clone(),
+    }
+}
+
+fn workspace_watch_artifact(workspace: &FsPath) -> anyhow::Result<CreateArtifactRequest> {
+    let root = git_output_in(workspace, ["rev-parse", "--show-toplevel"])?
+        .unwrap_or_else(|| workspace.display().to_string());
+    let branch = git_output_in(workspace, ["branch", "--show-current"])?;
+    let head = git_output_in(workspace, ["rev-parse", "--short", "HEAD"])?;
+    let status = git_output_in(workspace, ["status", "--short"])?.unwrap_or_default();
+    let body = format!(
+        "workspace watch\nroot\t{}\nbranch\t{}\nhead\t{}\nstatus\n{}",
+        root,
+        branch.as_deref().unwrap_or(""),
+        head.as_deref().unwrap_or(""),
+        status
+    );
+    Ok(CreateArtifactRequest {
+        kind: ArtifactKind::ToolInvocation,
+        title: Some("workspace watch".to_string()),
+        uri: Some(format!("file://{}", root)),
+        body: Some(body),
+        metadata: json!({
+            "adapter": "dashboard-dogfood",
+            "workspace": root,
+            "branch": branch,
+            "head": head,
+            "status": status
+        }),
+        snapshot: true,
+    })
+}
+
+fn git_diff_artifact(workspace: &FsPath) -> anyhow::Result<CreateArtifactRequest> {
+    let status = git_output_in(workspace, ["status", "--short"])?.unwrap_or_default();
+    let diff = git_output_in(workspace, ["diff", "--no-ext-diff"])?.unwrap_or_default();
+    Ok(CreateArtifactRequest {
+        kind: ArtifactKind::GitDiff,
+        title: Some("git diff".to_string()),
+        uri: None,
+        body: Some(format!(
+            "git status --short\n{}\n\ngit diff\n{}",
+            status, diff
+        )),
+        metadata: json!({ "source": "dashboard-dogfood", "status": status }),
+        snapshot: true,
+    })
+}
+
+fn git_output_in<const N: usize>(cwd: &FsPath, args: [&str; N]) -> anyhow::Result<Option<String>> {
+    let output = Command::new("git").args(args).current_dir(cwd).output();
+    let Ok(output) = output else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value = String::from_utf8(output.stdout)?.trim().to_string();
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -72,7 +72,8 @@ target/debug/aictx dashboard --print-url
 ```
 
 Open the printed dashboard URL to view sessions, recent artifacts, recent
-events, add notes, close sessions, and render/copy context packs.
+events, add notes, close sessions, and render/copy context packs or dogfood
+handoffs.
 
 ## MCP Setup
 
@@ -188,7 +189,8 @@ aictx dashboard --print-url
 ```
 
 The dashboard is served by the daemon and provides a browser control surface for
-sessions, notes, events, and pack rendering. It is intentionally local-only.
+sessions, notes, events, pack rendering, and dogfood handoffs. It is
+intentionally local-only.
 
 ## Development
 

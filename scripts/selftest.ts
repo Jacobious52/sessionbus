@@ -775,6 +775,7 @@ async function runCliE2e() {
     assertIncludes(page, "Start Session", "dashboard start control");
     assertIncludes(page, "Add Note", "dashboard note control");
     assertIncludes(page, "Render Pack", "dashboard pack control");
+    assertIncludes(page, "Dogfood Handoff", "dashboard dogfood control");
     assertIncludes(page, "Copy Pack", "dashboard copy control");
     assertIncludes(page, "Recent Artifacts", "dashboard artifact timeline");
     assertIncludes(page, "Integrations", "dashboard integrations panel");
@@ -819,6 +820,19 @@ async function runCliE2e() {
     }).then((response) => response.json());
     assertIncludes(dashboardPack.markdown, "Dashboard-created session", "dashboard pack title");
     assertIncludes(dashboardPack.markdown, "Dashboard control note", "dashboard pack note");
+    const dashboardDogfood = await fetch(`${api}/sessions/${sessionId}/dogfood`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        profile: "generic",
+        note: "Dashboard dogfood handoff",
+      }),
+    }).then((response) => response.json());
+    assertIncludes(dashboardDogfood.pack.markdown, "Selftest continuity", "dashboard dogfood pack title");
+    assertIncludes(dashboardDogfood.pack.markdown, "Dashboard dogfood handoff", "dashboard dogfood note");
+    assertIncludes(dashboardDogfood.pack.markdown, "workspace watch", "dashboard dogfood workspace");
+    assertIncludes(dashboardDogfood.pack.markdown, "git diff", "dashboard dogfood diff");
+    assertIncludes(JSON.stringify(dashboardDogfood.artifacts), "workspace", "dashboard dogfood artifact summary");
     const status = await fetch(`${api}/sessions/${dashboardSession.id}/status`, {
       method: "POST",
       headers: { "content-type": "application/json" },
