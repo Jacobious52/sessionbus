@@ -1633,77 +1633,10 @@ async fn prepare_dogfood_handoff(
     session_id: &str,
     profile: PackProfile,
     note: Option<String>,
-) -> Result<DogfoodHandoff> {
-    let artifacts = capture_dogfood_artifacts(client, session_id, note).await?;
-    let mut pack = client.pack(session_id, profile).await?;
-    apply_local_redaction(&mut pack)?;
-    Ok(DogfoodHandoff { artifacts, pack })
-}
-
-async fn capture_dogfood_artifacts(
-    client: &ApiClient,
-    session_id: &str,
-    note: Option<String>,
-) -> Result<Vec<DogfoodArtifact>> {
-    let workspace = detect_workspace()?;
-    let mut artifacts = Vec::new();
-    let workspace_artifact = client
-        .add_artifact(
-            session_id,
-            workspace_watch_artifact(Path::new(&workspace.root))?,
-        )
-        .await?;
-    artifacts.push(DogfoodArtifact {
-        label: "workspace".to_string(),
-        id: workspace_artifact.id,
-    });
-
-    if git_output(["status", "--short"])?.is_some() {
-        let diff_artifact = client
-            .add_artifact(session_id, git_diff_artifact()?)
-            .await?;
-        artifacts.push(DogfoodArtifact {
-            label: "git_diff".to_string(),
-            id: diff_artifact.id,
-        });
-    } else {
-        artifacts.push(DogfoodArtifact {
-            label: "git_diff".to_string(),
-            id: "skipped-clean-worktree".to_string(),
-        });
-    }
-
-    if let Some(note) = note {
-        let note_artifact = client
-            .add_artifact(
-                session_id,
-                CreateArtifactRequest {
-                    kind: ArtifactKind::Note,
-                    title: Some("dogfood note".to_string()),
-                    uri: None,
-                    body: Some(note),
-                    metadata: json!({ "source": "dogfood" }),
-                    snapshot: true,
-                },
-            )
-            .await?;
-        artifacts.push(DogfoodArtifact {
-            label: "note".to_string(),
-            id: note_artifact.id,
-        });
-    }
-
-    Ok(artifacts)
-}
-
-struct DogfoodArtifact {
-    label: String,
-    id: String,
-}
-
-struct DogfoodHandoff {
-    artifacts: Vec<DogfoodArtifact>,
-    pack: ContextPack,
+) -> Result<sessionbus_store::DogfoodHandoff> {
+    let mut handoff = client.dogfood(session_id, profile, note).await?;
+    apply_local_redaction(&mut handoff.pack)?;
+    Ok(handoff)
 }
 
 struct DaemonGuard {

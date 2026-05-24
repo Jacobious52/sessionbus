@@ -6,6 +6,7 @@ use sessionbus_core::{
     CreateDecisionRequest, CreateSessionRequest, Decision, PackProfile, Session, SessionStatus,
     UpdateSessionStatusRequest,
 };
+use sessionbus_store::DogfoodHandoff;
 
 #[derive(Clone)]
 pub(crate) struct ApiClient {
@@ -138,6 +139,19 @@ impl ApiClient {
         self.post(
             &format!("/sessions/{session_id}/pack"),
             &json!({ "profile": profile }),
+        )
+        .await
+    }
+
+    pub(crate) async fn dogfood(
+        &self,
+        session_id: &str,
+        profile: PackProfile,
+        note: Option<String>,
+    ) -> Result<DogfoodHandoff> {
+        self.post(
+            &format!("/sessions/{session_id}/dogfood"),
+            &json!({ "profile": profile, "note": note }),
         )
         .await
     }

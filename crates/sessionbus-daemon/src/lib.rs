@@ -8,16 +8,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sessionbus_core::{
-    AdapterRegistration, Artifact, ArtifactKind, BusEvent, CapabilityDescriptor, ContextPack,
-    CreateArtifactRequest, CreateDecisionRequest, CreateSessionRequest, PackProfile,
-    UpdateSessionStatusRequest,
+    AdapterRegistration, BusEvent, CapabilityDescriptor, ContextPack, CreateArtifactRequest,
+    CreateDecisionRequest, CreateSessionRequest, PackProfile, UpdateSessionStatusRequest,
 };
-use sessionbus_store::SessionbusStore;
-use std::{
-    net::SocketAddr,
-    path::{Path as FsPath, PathBuf},
-    process::Command,
-};
+use sessionbus_store::{DogfoodHandoff, SessionbusStore};
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -669,148 +664,23 @@ struct DogfoodRequest {
     note: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct DogfoodArtifact {
-    label: String,
-    id: String,
-}
-
-#[derive(Debug, Serialize)]
-struct DogfoodResponse {
-    artifacts: Vec<DogfoodArtifact>,
-    pack: ContextPack,
-}
-
 #[tracing::instrument(skip(state, request))]
 async fn dogfood_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(request): Json<DogfoodRequest>,
-) -> Result<Json<DogfoodResponse>, ApiError> {
-    state
+) -> Result<Json<DogfoodHandoff>, ApiError> {
+    let handoff = state
         .store
-        .get_session(&id)
-        .await?
-        .ok_or_else(|| ApiError::not_found(format!("session not found: {id}")))?;
-    let artifacts = capture_dogfood_artifacts(&state.store, &id, request.note).await?;
-    let pack = state.store.pack_session(&id, request.profile).await?;
-    Ok(Json(DogfoodResponse { artifacts, pack }))
-}
-
-async fn capture_dogfood_artifacts(
-    store: &SessionbusStore,
-    session_id: &str,
-    note: Option<String>,
-) -> Result<Vec<DogfoodArtifact>, ApiError> {
-    let session = store
-        .get_session(session_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found(format!("session not found: {session_id}")))?;
-    let mut artifacts = Vec::new();
-    if let Some(workspace) = session.workspace.as_ref() {
-        let root = FsPath::new(&workspace.root);
-        let workspace_artifact = store
-            .add_artifact(session_id, workspace_watch_artifact(root)?)
-            .await?;
-        artifacts.push(summary_artifact("workspace", &workspace_artifact));
-        if git_output_in(root, ["status", "--short"])?.is_some() {
-            let diff_artifact = store
-                .add_artifact(session_id, git_diff_artifact(root)?)
-                .await?;
-            artifacts.push(summary_artifact("git_diff", &diff_artifact));
-        } else {
-            artifacts.push(DogfoodArtifact {
-                label: "git_diff".to_string(),
-                id: "skipped-clean-worktree".to_string(),
-            });
-        }
-    }
-
-    if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
-        let note_artifact = store
-            .add_artifact(
-                session_id,
-                CreateArtifactRequest {
-                    kind: ArtifactKind::Note,
-                    title: Some("dashboard dogfood note".to_string()),
-                    uri: None,
-                    body: Some(note),
-                    metadata: json!({ "source": "dashboard-dogfood" }),
-                    snapshot: true,
-                },
-            )
-            .await?;
-        artifacts.push(summary_artifact("note", &note_artifact));
-    }
-    Ok(artifacts)
-}
-
-fn summary_artifact(label: &str, artifact: &Artifact) -> DogfoodArtifact {
-    DogfoodArtifact {
-        label: label.to_string(),
-        id: artifact.id.clone(),
-    }
-}
-
-fn workspace_watch_artifact(workspace: &FsPath) -> anyhow::Result<CreateArtifactRequest> {
-    let root = git_output_in(workspace, ["rev-parse", "--show-toplevel"])?
-        .unwrap_or_else(|| workspace.display().to_string());
-    let branch = git_output_in(workspace, ["branch", "--show-current"])?;
-    let head = git_output_in(workspace, ["rev-parse", "--short", "HEAD"])?;
-    let status = git_output_in(workspace, ["status", "--short"])?.unwrap_or_default();
-    let body = format!(
-        "workspace watch\nroot\t{}\nbranch\t{}\nhead\t{}\nstatus\n{}",
-        root,
-        branch.as_deref().unwrap_or(""),
-        head.as_deref().unwrap_or(""),
-        status
-    );
-    Ok(CreateArtifactRequest {
-        kind: ArtifactKind::ToolInvocation,
-        title: Some("workspace watch".to_string()),
-        uri: Some(format!("file://{}", root)),
-        body: Some(body),
-        metadata: json!({
-            "adapter": "dashboard-dogfood",
-            "workspace": root,
-            "branch": branch,
-            "head": head,
-            "status": status
-        }),
-        snapshot: true,
-    })
-}
-
-fn git_diff_artifact(workspace: &FsPath) -> anyhow::Result<CreateArtifactRequest> {
-    let status = git_output_in(workspace, ["status", "--short"])?.unwrap_or_default();
-    let diff = git_output_in(workspace, ["diff", "--no-ext-diff"])?.unwrap_or_default();
-    Ok(CreateArtifactRequest {
-        kind: ArtifactKind::GitDiff,
-        title: Some("git diff".to_string()),
-        uri: None,
-        body: Some(format!(
-            "git status --short\n{}\n\ngit diff\n{}",
-            status, diff
-        )),
-        metadata: json!({ "source": "dashboard-dogfood", "status": status }),
-        snapshot: true,
-    })
-}
-
-fn git_output_in<const N: usize>(cwd: &FsPath, args: [&str; N]) -> anyhow::Result<Option<String>> {
-    let output = Command::new("git").args(args).current_dir(cwd).output();
-    let Ok(output) = output else {
-        return Ok(None);
-    };
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let value = String::from_utf8(output.stdout)?.trim().to_string();
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(value))
-    }
+        .dogfood_handoff(
+            &id,
+            request.profile,
+            request.note,
+            "dashboard-dogfood",
+            "dashboard dogfood note",
+        )
+        .await?;
+    Ok(Json(handoff))
 }
 
 #[derive(Debug, Deserialize)]

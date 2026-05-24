@@ -2,12 +2,13 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sessionbus_core::{
-    build_context_pack, sha256_hex, AdapterRegistration, Artifact, BusEvent, CapabilityDescriptor,
-    ContextPack, CreateArtifactRequest, CreateDecisionRequest, CreateSessionRequest, Decision,
-    EventType, PackInput, PackProfile, RedactionPolicy, Session, SessionStatus,
+    build_context_pack, sha256_hex, AdapterRegistration, Artifact, ArtifactKind, BusEvent,
+    CapabilityDescriptor, ContextPack, CreateArtifactRequest, CreateDecisionRequest,
+    CreateSessionRequest, Decision, EventType, PackInput, PackProfile, RedactionPolicy, Session,
+    SessionStatus,
 };
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
-use std::path::Path;
+use std::{path::Path, process::Command};
 use uuid::Uuid;
 
 const INIT_SQL: &str = include_str!("../migrations/001_init.sql");
@@ -16,6 +17,18 @@ const SOURCE_STORE: &str = "sessionbus-store";
 #[derive(Debug, Clone)]
 pub struct SessionbusStore {
     pool: SqlitePool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DogfoodArtifact {
+    pub label: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DogfoodHandoff {
+    pub artifacts: Vec<DogfoodArtifact>,
+    pub pack: ContextPack,
 }
 
 impl SessionbusStore {
@@ -307,6 +320,71 @@ impl SessionbusStore {
         Ok(pack)
     }
 
+    pub async fn dogfood_handoff(
+        &self,
+        session_id: &str,
+        profile: PackProfile,
+        note: Option<String>,
+        source: &str,
+        note_title: &str,
+    ) -> Result<DogfoodHandoff> {
+        let artifacts = self
+            .capture_dogfood_artifacts(session_id, note, source, note_title)
+            .await?;
+        let pack = self.pack_session(session_id, profile).await?;
+        Ok(DogfoodHandoff { artifacts, pack })
+    }
+
+    pub async fn capture_dogfood_artifacts(
+        &self,
+        session_id: &str,
+        note: Option<String>,
+        source: &str,
+        note_title: &str,
+    ) -> Result<Vec<DogfoodArtifact>> {
+        let session = self
+            .get_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+        let mut artifacts = Vec::new();
+        if let Some(workspace) = session.workspace.as_ref() {
+            let root = Path::new(&workspace.root);
+            let workspace_artifact = self
+                .add_artifact(session_id, workspace_watch_artifact(root, source)?)
+                .await?;
+            artifacts.push(summary_artifact("workspace", &workspace_artifact));
+            if git_output_in(root, ["status", "--short"])?.is_some() {
+                let diff_artifact = self
+                    .add_artifact(session_id, git_diff_artifact(root, source)?)
+                    .await?;
+                artifacts.push(summary_artifact("git_diff", &diff_artifact));
+            } else {
+                artifacts.push(DogfoodArtifact {
+                    label: "git_diff".to_string(),
+                    id: "skipped-clean-worktree".to_string(),
+                });
+            }
+        }
+
+        if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
+            let note_artifact = self
+                .add_artifact(
+                    session_id,
+                    CreateArtifactRequest {
+                        kind: ArtifactKind::Note,
+                        title: Some(note_title.to_string()),
+                        uri: None,
+                        body: Some(note),
+                        metadata: json!({ "source": source }),
+                        snapshot: true,
+                    },
+                )
+                .await?;
+            artifacts.push(summary_artifact("note", &note_artifact));
+        }
+        Ok(artifacts)
+    }
+
     pub async fn register_adapter(
         &self,
         descriptor: CapabilityDescriptor,
@@ -526,6 +604,74 @@ fn normalize_json(value: Value) -> Value {
     }
 }
 
+fn summary_artifact(label: &str, artifact: &Artifact) -> DogfoodArtifact {
+    DogfoodArtifact {
+        label: label.to_string(),
+        id: artifact.id.clone(),
+    }
+}
+
+fn workspace_watch_artifact(workspace: &Path, source: &str) -> Result<CreateArtifactRequest> {
+    let root = git_output_in(workspace, ["rev-parse", "--show-toplevel"])?
+        .unwrap_or_else(|| workspace.display().to_string());
+    let branch = git_output_in(workspace, ["branch", "--show-current"])?;
+    let head = git_output_in(workspace, ["rev-parse", "--short", "HEAD"])?;
+    let status = git_output_in(workspace, ["status", "--short"])?.unwrap_or_default();
+    let body = format!(
+        "workspace watch\nroot\t{}\nbranch\t{}\nhead\t{}\nstatus\n{}",
+        root,
+        branch.as_deref().unwrap_or(""),
+        head.as_deref().unwrap_or(""),
+        status
+    );
+    Ok(CreateArtifactRequest {
+        kind: ArtifactKind::ToolInvocation,
+        title: Some("workspace watch".to_string()),
+        uri: Some(format!("file://{}", root)),
+        body: Some(body),
+        metadata: json!({
+            "adapter": source,
+            "workspace": root,
+            "branch": branch,
+            "head": head,
+            "status": status
+        }),
+        snapshot: true,
+    })
+}
+
+fn git_diff_artifact(workspace: &Path, source: &str) -> Result<CreateArtifactRequest> {
+    let status = git_output_in(workspace, ["status", "--short"])?.unwrap_or_default();
+    let diff = git_output_in(workspace, ["diff", "--no-ext-diff"])?.unwrap_or_default();
+    Ok(CreateArtifactRequest {
+        kind: ArtifactKind::GitDiff,
+        title: Some("git diff".to_string()),
+        uri: None,
+        body: Some(format!(
+            "git status --short\n{}\n\ngit diff\n{}",
+            status, diff
+        )),
+        metadata: json!({ "source": source, "status": status }),
+        snapshot: true,
+    })
+}
+
+fn git_output_in<const N: usize>(cwd: &Path, args: [&str; N]) -> Result<Option<String>> {
+    let output = Command::new("git").args(args).current_dir(cwd).output();
+    let Ok(output) = output else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value = String::from_utf8(output.stdout)?.trim().to_string();
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
 fn event_type_string(event_type: EventType) -> Result<String> {
     let value = serde_json::to_value(event_type)?;
     value
@@ -553,6 +699,7 @@ mod tests {
         AdapterCapability, AdapterProtocol, ArtifactKind, CreateArtifactRequest,
         CreateDecisionRequest, CreateSessionRequest, WorkspaceInfo,
     };
+    use std::{fs, process::Command};
 
     #[tokio::test]
     async fn stores_sessions_artifacts_decisions_and_redacted_packs() {
@@ -629,5 +776,72 @@ mod tests {
         let adapters = store.list_adapters().await.unwrap();
         assert_eq!(adapters.len(), 1);
         assert_eq!(adapters[0].descriptor.adapter_id, "terminal");
+    }
+
+    #[tokio::test]
+    async fn dogfood_handoff_captures_workspace_diff_note_and_pack() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        fs::write(repo.join("service.yaml"), "name: api\n").unwrap();
+        git(repo, ["init"]);
+        git(repo, ["config", "user.name", "Sessionbus Store Test"]);
+        git(
+            repo,
+            ["config", "user.email", "store-test@sessionbus.local"],
+        );
+        git(repo, ["add", "service.yaml"]);
+        git(repo, ["commit", "-m", "initial"]);
+        fs::write(repo.join("service.yaml"), "name: api\nreplicas: 2\n").unwrap();
+
+        let store = SessionbusStore::in_memory().await.unwrap();
+        let session = store
+            .create_session(CreateSessionRequest {
+                title: "Dogfood shared capture".to_string(),
+                workspace: Some(WorkspaceInfo {
+                    root: repo.display().to_string(),
+                    git_remote: None,
+                    git_branch: Some("main".to_string()),
+                    head: Some("abc123".to_string()),
+                }),
+                summary: None,
+            })
+            .await
+            .unwrap();
+
+        let handoff = store
+            .dogfood_handoff(
+                &session.id,
+                PackProfile::Generic,
+                Some("Shared dogfood note".to_string()),
+                "store-test",
+                "dogfood note",
+            )
+            .await
+            .unwrap();
+
+        let labels = handoff
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["workspace", "git_diff", "note"]);
+        assert!(handoff.pack.markdown.contains("Dogfood shared capture"));
+        assert!(handoff.pack.markdown.contains("workspace watch"));
+        assert!(handoff.pack.markdown.contains("git diff"));
+        assert!(handoff.pack.markdown.contains("replicas: 2"));
+        assert!(handoff.pack.markdown.contains("Shared dogfood note"));
+    }
+
+    fn git<const N: usize>(cwd: &std::path::Path, args: [&str; N]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
