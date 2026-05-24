@@ -1,0 +1,21 @@
+{
+  "name": "sessionbus-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/adapter-sdk-ts",
+    "adapters/terminal",
+    "adapters/filesystem"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run selftest:unit && npm run test --workspaces",
+    "selftest": "node scripts/run-selftest.mjs",
+    "selftest:unit": "bun test scripts/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

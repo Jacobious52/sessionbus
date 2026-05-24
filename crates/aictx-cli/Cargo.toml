@@ -1,0 +1,23 @@
+[package]
+name = "aictx-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "aictx"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sessionbus-core = { path = "../sessionbus-core" }
+sessionbus-daemon = { path = "../sessionbus-daemon" }
+sessionbus-store = { path = "../sessionbus-store" }
+tokio.workspace = true
+tracing-subscriber.workspace = true
